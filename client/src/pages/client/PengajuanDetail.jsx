@@ -1,134 +1,13 @@
+/** Detail pengajuan sisi pelanggan: tugas, pop-up kirim tanggapan/bukti/bayar. */
 import { useEffect, useState, useCallback } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 import api, { errMsg, download } from '../../api';
-import { useAuth } from '../../AuthContext';
-import { PageHead, Loading, useToast, Sheet, FileDrop, rupiah, fmtDate } from '../../components/ui';
-import AppTable from '../../components/AppTable';
+import { Loading, useToast, Sheet, FileDrop, rupiah, fmtDate } from '../../components/ui';
 import ApplicationView from '../../components/ApplicationView';
+import { docWord } from '../../lib/constants';
+import Survey from './Survey';
 
-const dayDiff = (d) => (d ? Math.round((new Date(`${d}T00:00:00`) - new Date(new Date().toDateString())) / 86400000) : null);
-
-export function Beranda() {
-  const { user } = useAuth();
-  const [rows, setRows] = useState(null);
-  const [tab, setTab] = useState('jalan');
-  useEffect(() => { api.get('/applications').then((r) => setRows(r.data)); }, []);
-  if (!rows) return <Loading />;
-  const todo = rows.flatMap((a) => {
-    const name = a.product_label.split(' · ')[0];
-    const meta = `${name} · ${a.application_no}`;
-    if (a.status === 'aksi') return [{ a, ic: 'exclamation-lg', cls: 'ic-warn', pill: ['pill-action', 'Permintaan PSU'], t: 'Tanggapi permintaan PSU', s: meta }];
-    if (a.open_findings > 0 && a.finding_due) {
-      const n = dayDiff(a.finding_due);
-      const left = n < 0 ? `terlambat ${-n} hari` : `sisa ${n} hari`;
-      return [{ a, ic: 'clock-history', cls: 'ic-warn', pill: ['pill-action', `Temuan audit · ${left}`], t: 'Kirim bukti perbaikan temuan', s: meta, m: <>{name} · tenggat {fmtDate(a.finding_due)} · <b className="text-warn">{left}</b></> }];
-    }
-    if (a.condition === 'Waiting for Payment' && a.payment_status === 'invoice') return [{ a, ic: 'credit-card', cls: 'ic-info', pill: ['pill-progress', `Invoice · ${rupiah(a.pay_amount)}`], t: 'Bayar dan unggah bukti transfer', s: meta, m: `${name} · ${rupiah(a.pay_amount)}` }];
-    if (a.status === 'selesai' && !a.survey_done) return [{ a, ic: 'download', cls: 'ic-ok', pill: ['pill-done', `${a.service_code === 'SP' || a.service_code === 'KAL' ? 'Sertifikat' : 'LHU'} terbit`], t: 'Isi survei & unduh dokumen', s: meta, m: `${name} · dokumen telah terbit` }];
-    return [];
-  });
-  const jalan = rows.filter((a) => !['selesai', 'ditolak'].includes(a.status));
-  const selesai = rows.filter((a) => ['selesai', 'ditolak'].includes(a.status));
-  const hari = new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-  return (
-    <>
-      <div className="page-head home-head">
-        <div><div className="small text-muted2">{hari}</div><h1>Selamat datang, {user.name.split(' ')[0]}</h1></div>
-        <Link to="/klien/ajukan" className="btn btn-primary home-cta"><i className="bi bi-plus-lg" />Ajukan layanan</Link>
-      </div>
-      {todo.length > 0 && (
-        <section className="mb-4">
-          <h2 className="mb-2">Perlu tindakan Anda <span className="text-muted2 fw-normal">· {todo.length}</span></h2>
-          <div className="todo-cards">
-            {todo.map((x) => (
-              <Link key={x.a.id} to={`/klien/pengajuan/${x.a.id}`} className="todo-card">
-                <span className={`pill ${x.pill[0]}`}>{x.pill[1]}</span>
-                <b>{x.t}</b>
-                <span className="small text-muted2">{x.s}</span>
-              </Link>
-            ))}
-          </div>
-          <div className="panel todo-list todo-list-m">
-            {todo.map((x) => (
-              <Link key={x.a.id} to={`/klien/pengajuan/${x.a.id}`} className="todo-item">
-                <span className={`ic ${x.cls}`}><i className={`bi bi-${x.ic}`} /></span>
-                <span className="tx"><b>{x.t}</b><span>{x.m || x.s}</span></span>
-                <i className="bi bi-chevron-right text-muted2" aria-hidden="true" />
-              </Link>
-            ))}
-          </div>
-        </section>
-      )}
-      <section className="panel mb-4">
-        <div className="panel-h">
-          <h2 className="mb-0">Pengajuan saya</h2>
-          <div className="segmented" role="group" aria-label="Filter">
-            <button aria-pressed={tab === 'jalan'} onClick={() => setTab('jalan')}>Berjalan · {jalan.length}</button>
-            <button aria-pressed={tab === 'selesai'} onClick={() => setTab('selesai')}>Selesai · {selesai.length}</button>
-          </div>
-        </div>
-        <AppTable rows={tab === 'jalan' ? jalan : selesai} base="/klien/pengajuan" empty={tab === 'jalan' ? 'Belum ada pengajuan berjalan.' : 'Belum ada pengajuan selesai.'} />
-      </section>
-      <div className="help-cards">
-        <Link to="/klien/lacak" className="help-card"><span className="ic"><i className="bi bi-search" /></span><span><b>Lacak dengan kode</b><span>Bagikan kode lacak ke tim Anda, bisa dibuka tanpa login</span></span></Link>
-        <Link to="/layanan" className="help-card"><span className="ic"><i className="bi bi-telephone" /></span><span><b>Butuh bantuan?</b><span>Hubungi contact person layanan PSU</span></span></Link>
-      </div>
-    </>
-  );
-}
-
-export function PengajuanList() {
-  const [rows, setRows] = useState(null);
-  useEffect(() => { api.get('/applications').then((r) => setRows(r.data)); }, []);
-  if (!rows) return <Loading />;
-  return (
-    <>
-      <PageHead eyebrow="Pengajuan saya" title="Riwayat pengajuan" sub="Semua pengajuan layanan perusahaan Anda.">
-        <Link to="/klien/ajukan" className="btn btn-primary"><i className="bi bi-plus-lg" />Ajukan layanan</Link>
-      </PageHead>
-      <section className="panel"><AppTable rows={rows} base="/klien/pengajuan" /></section>
-    </>
-  );
-}
-
-/** Aksi pelanggan per temuan: kirim bukti perbaikan, ajukan perpanjangan 1 bulan (sekali). */
-/** Survei kepuasan pelanggan: wajib sebelum unduh sertifikat/LHU. */
-function Survey({ app, onDone }) {
-  const toast = useToast();
-  const [data, setData] = useState(null);
-  const [scores, setScores] = useState({});
-  const [suggestion, setSuggestion] = useState('');
-  const [busy, setBusy] = useState(false);
-  useEffect(() => { api.get(`/applications/${app.id}/survey`).then((r) => setData(r.data)); }, [app.id]);
-  if (!data) return <Loading />;
-  const submit = async () => {
-    if (data.questions.some((q) => !scores[q.id])) return toast('Mohon beri nilai untuk semua pertanyaan.', 'danger');
-    setBusy(true);
-    try { const r = await api.post(`/applications/${app.id}/survey`, { scores, suggestion }); onDone(r.data); } catch (e) { toast(errMsg(e), 'danger'); } finally { setBusy(false); }
-  };
-  return (
-    <section className="panel" aria-labelledby="sv-title">
-      <div className="panel-h"><h2 className="mb-0" id="sv-title">Survei Kepuasan Pelanggan</h2><span className="small text-muted2">wajib diisi untuk setiap penerbitan dokumen</span></div>
-      <div className="panel-b d-flex flex-column gap-3">
-        <p className="mb-0 small">Sebelum mengunduh {app.service_code === 'SP' || app.service_code === 'KAL' ? 'sertifikat' : 'LHU'}, mohon beri penilaian atas layanan kami. Skala 1 = sangat tidak puas, 5 = sangat puas.</p>
-        {data.questions.map((q, i) => (
-          <fieldset key={q.id} className="d-flex flex-wrap justify-content-between align-items-center gap-2 border-bottom pb-2">
-            <legend className="fs-6 mb-0 flex-grow-1" style={{ float: 'none', width: 'auto', maxWidth: 520 }}>{i + 1}. {q.question}</legend>
-            <div className="score">
-              {[1, 2, 3, 4, 5].map((v) => (
-                <span key={v}><input type="radio" id={`q${q.id}-${v}`} name={`q${q.id}`} checked={scores[q.id] === v} onChange={() => setScores({ ...scores, [q.id]: v })} /><label htmlFor={`q${q.id}-${v}`}>{v}</label></span>
-              ))}
-            </div>
-          </fieldset>
-        ))}
-        <div><label className="form-label" htmlFor="sg">Kritik dan saran (opsional)</label><textarea id="sg" className="form-control" rows={3} value={suggestion} onChange={(e) => setSuggestion(e.target.value)} /></div>
-        <div><button className="btn btn-gold" disabled={busy} onClick={submit}>{busy ? 'Mengirim…' : 'Kirim survei'}</button></div>
-      </div>
-    </section>
-  );
-}
-
-export function PengajuanDetail() {
+export default function PengajuanDetail() {
   const { id } = useParams();
   const toast = useToast();
   const [app, setApp] = useState(null);
@@ -168,7 +47,7 @@ export function PengajuanDetail() {
     return run(() => api.post(`/applications/${id}/findings/${sheet.f.id}/extension`, { reason: note }), 'Pengajuan perpanjangan terkirim.');
   };
 
-  const docWord = app.service_code === 'SP' || app.service_code === 'KAL' ? 'sertifikat' : 'LHU';
+  const dw = docWord(app.service_code);
   const dlCert = () => download(`/applications/${id}/certificate`, `${app.certificate.certificate_no}.pdf`).catch((e) => toast(errMsg(e), 'danger'));
   const active = app.status === 'aktif' || app.status === 'aksi';
   const openF = app.findings.filter((f) => f.status !== 'ditutup' && f.category !== 'observasi');
@@ -189,9 +68,9 @@ export function PengajuanDetail() {
       cta: 'Kirim bukti perbaikan', onClick: () => openSheet('bukti', nearest),
     };
   } else if (app.status === 'selesai' && app.certificate && !app.survey_done) {
-    task = { title: 'Isi survei kepuasan', text: `Survei wajib diisi sebelum mengunduh ${docWord}.`, cta: 'Isi survei', onClick: () => document.getElementById('sv-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) };
+    task = { title: 'Isi survei kepuasan', text: `Survei wajib diisi sebelum mengunduh ${dw}.`, cta: 'Isi survei', onClick: () => document.getElementById('sv-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) };
   } else if (app.status === 'selesai' && app.certificate && app.survey_done) {
-    task = { title: `${docWord[0].toUpperCase()}${docWord.slice(1)} siap diunduh`, text: thanks || `Nomor ${app.certificate.certificate_no}.`, cta: `Unduh ${docWord}`, icon: 'download', onClick: dlCert, done: true };
+    task = { title: `${dw[0].toUpperCase()}${dw.slice(1)} siap diunduh`, text: thanks || `Nomor ${app.certificate.certificate_no}.`, cta: `Unduh ${dw}`, icon: 'download', onClick: dlCert, done: true };
   }
   let info = null;
   if (!task && app.status === 'aktif') {

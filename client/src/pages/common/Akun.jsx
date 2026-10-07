@@ -4,9 +4,8 @@ import api, { errMsg } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Avatar, PageHead, useToast, useConfirm } from '../../components/ui';
 import { useSignOut } from '../../components/Layouts';
+import { roleLabel } from '../../lib/constants';
 
-const BIDANG = { SP: 'Sertifikasi Produk', LAB: 'Lab Pengujian', KAL: 'Lab Kalibrasi' };
-const ROLE = { superadmin: 'Super Admin', admin: 'Admin', user: 'Pelanggan' };
 
 /** Pengaturan akun: foto profil, data diri, keamanan. Dipakai semua role. */
 export default function Akun() {
@@ -76,7 +75,7 @@ export default function Akun() {
               {isUser ? (
                 <div className="col-md-6"><label className="form-label" htmlFor="ak-co">Perusahaan</label><input id="ak-co" className="form-control" value={user.company_name || ''} disabled /><div className="form-text">Data perusahaan dikelola oleh Admin PSU.</div></div>
               ) : (
-                <div className="col-md-6"><label className="form-label" htmlFor="ak-rl">Peran</label><input id="ak-rl" className="form-control" value={user.role === 'admin' ? `${user.jabatan || 'Admin'} · ${BIDANG[user.bidang] || ''}` : ROLE[user.role]} disabled /></div>
+                <div className="col-md-6"><label className="form-label" htmlFor="ak-rl">Peran</label><input id="ak-rl" className="form-control" value={roleLabel(user)} disabled /></div>
               )}
               <div className="col-12"><label className="form-label" htmlFor="ak-ad">Alamat {isUser ? 'korespondensi' : ''}</label><textarea id="ak-ad" className="form-control" rows={2} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} maxLength={255} /></div>
             </div>

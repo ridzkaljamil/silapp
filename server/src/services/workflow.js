@@ -462,7 +462,7 @@ async function submitSurvey(app, user, { scores, suggestion }) {
 }
 
 module.exports = {
-  httpError, rupiah, getSteps, loadApp, picLabel, stepOf, condition, isSkipped, isLabTesting, assertCanHandle, addLog, notify, saveDocs,
+  httpError, getSteps, loadApp, stepOf, condition, isSkipped, assertCanHandle, addLog, notify,
   OPEN_FINDINGS, approve, requestAction, ignore, reject, updateParameter, issueInvoice, verifyPayment, tryAutoAdvance, allDocsDownloaded,
   addFindings, adminFinding, customerFindingReply, customerExtension, updateLabInfo, customerReply, customerPay, submitSurvey,
 };

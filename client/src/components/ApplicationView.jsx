@@ -5,6 +5,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { StatusPill, SegProgress, StepsList, LogList, fmtDate, rupiah } from './ui';
+import { docWord } from '../lib/constants';
 
 const PST = { antri: ['pill-progress', 'Antrian'], uji: ['pill-action', 'Dalam pengujian'], selesai: ['pill-done', 'Selesai'] };
 const CAT = { mayor: 'Mayor', minor: 'Minor', observasi: 'Observasi' };
@@ -181,7 +182,7 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
   const next = curIdx >= 0 ? app.steps.slice(curIdx + 1).find((s) => s.state === 'todo') : null;
   const showFindings = app.findings.length > 0 || !!findingsExtra;
   const title = app.product_label.split(' · ').slice(0, 2).join(' · ');
-  const docWord = app.service_code === 'SP' || app.service_code === 'KAL' ? 'Sertifikat' : 'LHU';
+  const docName = docWord(app.service_code, true);
   const tabs = [
     ['ringkasan', 'Ringkasan'],
     ...(showFindings ? [['temuan', 'Temuan', openF.length, openF.length > 0]] : []),
@@ -210,7 +211,7 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
 
       {decision && !decision.quiet && <div className="decision-m">{decision.body}</div>}
       {app.status === 'ditolak' && <div className="alert alert-danger mb-3"><b>Pengajuan ditutup.</b> {app.reject_note}</div>}
-      {app.status === 'selesai' && app.certificate && <div className="alert alert-success mb-3"><b>{docWord} {app.certificate.certificate_no}</b> terbit {fmtDate(app.certificate.issued_at)}.{!app.survey_done && (admin ? ' Pelanggan belum mengisi survei kepuasan.' : ' Isi survei kepuasan untuk mengunduh dokumen.')}</div>}
+      {app.status === 'selesai' && app.certificate && <div className="alert alert-success mb-3"><b>{docName} {app.certificate.certificate_no}</b> terbit {fmtDate(app.certificate.issued_at)}.{!app.survey_done && (admin ? ' Pelanggan belum mengisi survei kepuasan.' : ' Isi survei kepuasan untuk mengunduh dokumen.')}</div>}
 
       <section className="panel panel-b mb-4 d-flex flex-column gap-3" aria-label="Progres">
         <div className="d-flex justify-content-between flex-wrap gap-2 small">
@@ -281,17 +282,15 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
                 {merek && <FragmentRow k="Merek" v={merek} />}
                 {admin && <FragmentRow k="Kontak" v={<>{app.user_name}<br /><a href={`mailto:${app.user_email}`}>{app.user_email}</a></>} />}
                 <FragmentRow k="Kode lacak" v={<span className="mono">{app.tracking_code}</span>} />
-                {moreDetail && (
-                  <>
-                    {app.application_type && <FragmentRow k="Jenis" v={app.application_type} />}
-                    {app.scheme && <FragmentRow k="Skema" v={app.scheme} />}
-                    {app.location && <FragmentRow k="Lokasi" v={app.location === 'onsite' ? 'On-site' : 'Di laboratorium'} />}
-                    {app.details.filter((d) => !['kota_provinsi', 'merek'].includes(d.key)).map((d) => <FragmentRow key={d.label} k={d.label} v={d.value} />)}
-                    {app.equipment.map((e) => <FragmentRow key={e.id} k="Alat" v={`${e.name} ${e.brand_model || ''} · S/N ${e.serial_number || '-'} · ${e.range_capacity || ''}`} />)}
-                    {app.samples.map((x) => <FragmentRow key={x.id} k="Sampel" v={`${x.description} · ${x.quantity} sampel`} />)}
-                  </>
-                )}
               </dl>
+              {moreDetail && <dl className="dl-grid swap mt-2">
+                {app.application_type && <FragmentRow k="Jenis" v={app.application_type} />}
+                {app.scheme && <FragmentRow k="Skema" v={app.scheme} />}
+                {app.location && <FragmentRow k="Lokasi" v={app.location === 'onsite' ? 'On-site' : 'Di laboratorium'} />}
+                {app.details.filter((d) => !['kota_provinsi', 'merek'].includes(d.key)).map((d) => <FragmentRow key={d.label} k={d.label} v={d.value} />)}
+                {app.equipment.map((e) => <FragmentRow key={e.id} k="Alat" v={`${e.name} ${e.brand_model || ''} · S/N ${e.serial_number || '-'} · ${e.range_capacity || ''}`} />)}
+                {app.samples.map((x) => <FragmentRow key={x.id} k="Sampel" v={`${x.description} · ${x.quantity} sampel`} />)}
+              </dl>}
               <button type="button" className="btn btn-link btn-sm p-0 mt-2 fw-semibold" style={{ minHeight: 0 }} onClick={() => setMoreDetail(!moreDetail)} aria-expanded={moreDetail}>{moreDetail ? 'Ringkas' : 'Lihat detail lengkap'}</button>
             </div>
           </section>

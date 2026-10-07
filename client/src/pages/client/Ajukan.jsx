@@ -2,9 +2,9 @@ import { useEffect, useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api, { errMsg } from '../../api';
 import { PageHead, Loading, useToast, rupiah, FILE_ACCEPT, Select } from '../../components/ui';
+import { SERVICE_STATE as STATE } from '../../lib/constants';
 
 const STEPS = ['Pilih layanan', 'Data & parameter', 'Unggah dokumen', 'Konfirmasi'];
-const STATE = { dev: 'Pengembangan', prep: 'Persiapan' };
 const APP_TYPES = ['Sertifikasi baru', 'Re-sertifikasi', 'Perluasan ruang lingkup', 'Perubahan data/merek', 'Transfer'];
 
 /** Pembungkus label + field (di luar komponen agar input tidak kehilangan fokus saat mengetik). */
@@ -124,7 +124,7 @@ export default function Ajukan() {
       <div className="row g-3 align-items-start">
       <div className={stage === 2 && isLab ? 'col-lg-8' : 'col-12'}>
       <section className="panel">
-        <div className="panel-b">
+        <div className="panel-b swap" key={stage}>
           {stage === 1 && parents.map((p) => {
             const items = p.bidang ? [p] : leaves.filter((s) => s.parent_id === p.id);
             return (
@@ -134,7 +134,7 @@ export default function Ajukan() {
                   {items.map((s) => (
                     <div className="col-sm-6 col-lg-3" key={s.code}>
                       <button type="button" className={`pick-card ${code === s.code ? 'active' : ''}`} onClick={() => setCode(s.code)}>
-                        <b className="d-block" style={{ color: 'var(--psu-navy)' }}>{s.name}</b>
+                        <b className="d-block" style={{ color: 'var(--navy)' }}>{s.name}</b>
                         <span className="small text-muted2 d-block">{s.steps.length} tahap · {s.est_text}</span>
                         {STATE[s.state] && <span className="pill pill-action mt-1">{STATE[s.state]}</span>}
                       </button>

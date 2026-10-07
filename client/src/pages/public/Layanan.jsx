@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import api from '../../api';
 import { Loading } from '../../components/ui';
+import { SERVICE_STATE as STATE } from '../../lib/constants';
 
-const STATE = { dev: 'Pengembangan', prep: 'Persiapan' };
 const ICON = { KIM: 'droplet-half', FIS: 'rulers', MIK: 'virus', KAL: 'speedometer2' };
 
 function Scope({ code, primary, extra }) {

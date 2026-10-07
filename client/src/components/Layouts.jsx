@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { NavLink, Link, Outlet, Navigate, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth, homeOf } from '../AuthContext';
-import { Avatar, useConfirm, useReveal } from './ui';
+import { Avatar, Loading, useConfirm, useReveal } from './ui';
 import api from '../api';
+import { roleLabel } from '../lib/constants';
 
 export const Brand = ({ to = '/', sub = 'PT Penilai Standar Uji' }) => (
   <Link to={to} className="brand">
@@ -35,10 +36,13 @@ export function PublicLayout() {
           <span className="pub-cta">{cta}</span>
         </div>
       </header>
-      <main className="pub-main" ref={mainRef}><div key={loc.pathname} className="page-anim"><Outlet /></div></main>
+      <main className="pub-main" ref={mainRef}><div key={loc.pathname} className="page-anim"><Page /></div></main>
     </>
   );
 }
+
+/** Halaman dimuat saat dibuka (lazy): tampilkan "Memuat…" selama berkasnya diunduh. */
+const Page = () => <Suspense fallback={<Loading />}><Outlet /></Suspense>;
 
 /** Ganti sandi wajib (login pertama): header minimal + tombol Keluar. */
 export function MinimalLayout() {
@@ -52,7 +56,7 @@ export function MinimalLayout() {
           {user && <button className="btn btn-outline-secondary ms-auto" onClick={signOut}><i className="bi bi-box-arrow-right" />Keluar</button>}
         </div>
       </header>
-      <main className="pub-main"><div className="page-anim"><Outlet /></div></main>
+      <main className="pub-main"><div className="page-anim"><Page /></div></main>
     </>
   );
 }
@@ -78,7 +82,6 @@ const MENUS = {
     { label: 'Publik', items: [I('/admin/directory', 'Directory', 'journal-text')] },
   ],
 };
-const BIDANG = { SP: 'Sertifikasi Produk', LAB: 'Lab Pengujian', KAL: 'Lab Kalibrasi' };
 const readCollapsed = () => { try { return localStorage.getItem('silapp_side') === 'min'; } catch { return false; } };
 
 /** Konfirmasi lalu keluar. Dipakai di sidebar dan menu profil. */
@@ -148,7 +151,7 @@ export function AppLayout({ roles }) {
 
   const isUser = user.role === 'user';
   const groups = MENUS[user.role].map((g) => ({ ...g, items: g.items.filter((m) => !m.bidang || m.bidang === user.bidang || user.role === 'superadmin') }));
-  const roleLabel = user.role === 'superadmin' ? 'Super Admin' : user.role === 'admin' ? `${user.jabatan || 'Admin'} · ${BIDANG[user.bidang] || ''}` : user.company_name;
+  const roleText = roleLabel(user);
   const base = isUser ? '/klien' : '/admin';
   const link = (m) => (
     <NavLink key={m.to + m.label} end={m.to === base} to={m.to} className={({ isActive }) => `side-link ${isActive ? 'active' : ''}`} title={collapsed ? m.label : undefined} aria-label={collapsed ? m.label : undefined}>
@@ -181,9 +184,9 @@ export function AppLayout({ roles }) {
           {link(I(`${base}/sandi`, 'Ganti kata sandi', 'key'))}
           <button className="side-link" onClick={signOut} title={collapsed ? 'Keluar' : undefined} aria-label={collapsed ? 'Keluar' : undefined}><i className="bi bi-box-arrow-left" aria-hidden="true" /><span className="txt">Keluar</span></button>
         </nav>
-        <Link to={`${base}/akun`} className="side-user" title={collapsed ? `${user.name} · ${roleLabel}` : 'Pengaturan akun'}>
+        <Link to={`${base}/akun`} className="side-user" title={collapsed ? `${user.name} · ${roleText}` : 'Pengaturan akun'}>
           <Avatar user={user} />
-          <span className="who"><b>{user.name}</b><span>{roleLabel}</span></span>
+          <span className="who"><b>{user.name}</b><span>{roleText}</span></span>
         </Link>
       </aside>
       {/* tombol ">" di tengah tepi sidebar saat disembunyikan */}
@@ -198,11 +201,11 @@ export function AppLayout({ roles }) {
           <span className="ttl">{title}</span>
           <span className="ms-auto d-flex align-items-center gap-2">
             {isUser && <span className="hide-sm small text-muted2 pe-1 border-end me-1" style={{ paddingRight: 12 }}>{user.company_name}</span>}
-            <ProfileMenu user={user} roleLabel={roleLabel} base={base} />
+            <ProfileMenu user={user} roleLabel={roleText} base={base} />
           </span>
         </header>
         <main className="app-content" ref={mainRef}>
-          <div className="container-x"><div key={loc.pathname} className="page-anim"><Outlet /></div></div>
+          <div className="container-x"><div key={loc.pathname} className="page-anim"><Page /></div></div>
         </main>
       </div>
 

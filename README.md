@@ -1,128 +1,99 @@
-# SILAPP · Prototype Iterasi 2 (tampilan Opsi A)
+# SILAPP
 
 **Sistem Informasi Layanan dan Tracking Pengujian Produk** untuk PT Penilai Standar Uji.
-Stack: **React (Vite) + Bootstrap 5 + Axios** · **Node.js + Express** · **MySQL** · JWT + RBAC · bcrypt · Multer · Nodemailer.
 
-Alur status mengikuti tiga dokumen *Rancangan Sistem Tracking* perusahaan:
+SILAPP digunakan pelanggan untuk mengajukan layanan dan memantau status pengajuan secara daring, sedangkan Admin dan Super Admin memakainya untuk memproses pengajuan, mengelola data, dan mencatat setiap perubahan status.
 
-| Layanan | Status tracking | Catatan |
-|---|---|---|
-| Sertifikasi Produk (LSPro) | ST-01 s.d. ST-10 | ST-03 selesai otomatis (bayar terverifikasi + berkas diunduh Super Admin); ST-07 hanya jika ada temuan/ketidaksesuaian; Tipe 5 & Tipe 1B |
-| Lab Kimia / Fisika / Mikrobiologi | LAB-01 s.d. LAB-08 | LAB-05 Proses pengujian laboratorium terkunci sampai semua parameter selesai |
-| Lab Kalibrasi | KAL-01 s.d. KAL-09 | KAL-09 Pengembalian alat dilewati untuk kalibrasi on-site |
+## Fitur
 
-Tampilan memakai desain **Opsi A · Clean Workspace** (Plus Jakarta Sans, navy #0D2040 + emas #C59B27, latar polos #F6F7F9), responsif untuk HP:
-sidebar bisa disembunyikan, menu bawah untuk pelanggan, daftar ringkas + lembar detail dari bawah, dan animasi halus di semua halaman.
+- **Publik:** lacak status pengajuan dengan kode lacak (tanpa login), informasi layanan, dan direktori.
+- **Pelanggan:** mengajukan layanan, mengunggah dokumen dan bukti bayar, membalas permintaan tindakan atau temuan, mengunduh sertifikat/laporan, dan mengisi survei kepuasan.
+- **Admin:** antrean pengajuan per bidang, persetujuan tiap tahap, invoice dan verifikasi pembayaran, temuan audit, parameter uji lab, akun pelanggan, dan dashboard.
+- **Super Admin:** semua fitur Admin, ditambah pengguna internal, master layanan dan tahapan, form pengajuan, harga lab, survei, serta data sertifikat.
+- Notifikasi email, pengaturan akun dengan foto profil, dan tampilan responsif untuk HP.
 
----
+Status tracking per layanan:
 
-## 1. Kebutuhan
+| Layanan | Kode status |
+|---|---|
+| Sertifikasi Produk | ST-01 s.d. ST-10 |
+| Lab Kimia / Fisika / Mikrobiologi | LAB-01 s.d. LAB-08 |
+| Lab Kalibrasi | KAL-01 s.d. KAL-09 |
 
-- Node.js 18 atau lebih baru (disarankan 20/22)
-- MySQL 8 atau MariaDB 10.6+
+## Teknologi
 
-## 2. Menjalankan di komputer lokal (Windows + XAMPP)
+- **Frontend:** React (Vite), Bootstrap 5, Axios
+- **Backend:** Node.js, Express, JWT, bcrypt, Multer, Nodemailer
+- **Database:** MySQL 8 / MariaDB 10.6+
 
-> Jalankan semua perintah dari folder induk proyek, mis. `C:\xampp\htdocs\silapp`.
-> Folder ini **tidak** dijalankan oleh Apache; aplikasi berjalan lewat Node.js. XAMPP hanya dipakai untuk MySQL.
+## Instalasi
 
-1. **Nyalakan MySQL** di XAMPP Control Panel (klik *Start* pada MySQL).
-2. **Buat database** lewat phpMyAdmin (`http://localhost/phpmyadmin`) → tab SQL:
+Yang perlu disiapkan: Node.js 18 atau lebih baru dan MySQL (misalnya lewat XAMPP).
+
+1. Nyalakan MySQL, lalu buat database:
    ```sql
    CREATE DATABASE silapp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
    ```
-3. **Siapkan `.env`**: salin `server\.env.example` menjadi `server\.env`, lalu untuk XAMPP isi:
+2. Salin `server/.env.example` menjadi `server/.env`, lalu sesuaikan isinya:
    ```
    DB_USER=root
    DB_PASS=
    JWT_SECRET=isi-dengan-teks-acak-panjang
    ```
-4. **Install, isi database, jalankan** (dari folder induk):
+3. Dari folder utama proyek, jalankan:
    ```bash
-   npm install          # otomatis meng-install server/ dan client/
-   npm run db:reset     # membuat tabel + data awal (menghapus data lama!)
-   npm run dev          # API :5000 dan web :5173 berjalan bersamaan
+   npm install        # meng-install server dan client
+   npm run db:reset   # membuat tabel dan data awal (menghapus data lama)
+   npm run dev        # API di :5000, web di :5173
    ```
-5. Buka **http://localhost:5173**.
+4. Buka http://localhost:5173.
 
-Alternatif tanpa skrip induk: jalankan `npm install` dan `npm run dev` di folder `server`, lalu di terminal lain di folder `client`.
+## Akun demo
 
-## 3. Akun demo
-Semua kata sandi: **password123**
+Kata sandi semua akun: `password123`
 
-| Role | Email | Jabatan · Bidang |
-|---|---|---|
-| Super Admin | superadmin@penilaistandaruji.com | semua bidang |
-| Admin | budi@penilaistandaruji.com | Admin Sertifikasi · Sertifikasi Produk |
-| Admin | dewi@penilaistandaruji.com | Auditor · Sertifikasi Produk |
-| Admin | sari@penilaistandaruji.com | Admin Lab · Lab Pengujian |
-| Admin | tono@penilaistandaruji.com | Analis · Lab Pengujian |
-| Admin | andi@penilaistandaruji.com | Admin Kalibrasi · Lab Kalibrasi |
-| User | rina@sinarcontoh.co.id | PT Sinar Contoh Abadi |
-| User | dimas@tanisubur.co.id | CV Tani Subur Persada |
+| Role | Email |
+|---|---|
+| Super Admin | superadmin@penilaistandaruji.com |
+| Admin Sertifikasi Produk | budi@penilaistandaruji.com |
+| Admin Lab Pengujian | sari@penilaistandaruji.com |
+| Admin Lab Kalibrasi | andi@penilaistandaruji.com |
+| Pelanggan | rina@sinarcontoh.co.id |
 
-Kode lacak contoh (tanpa login): `SLP-X2KD-4M7A`, `SLP-C7WD-2KPM`, `SLP-9RTE-3LQW`, `SLP-M4PQ-7HZT`, `SLP-R8NB-5JVC`.
+Contoh kode lacak: `SLP-X2KD-4M7A`, `SLP-C7WD-2KPM`, `SLP-9RTE-3LQW`.
 
-Tidak ada pendaftaran mandiri. Akun pelanggan baru dibuat lewat menu **Akun pelanggan** (Admin/Super Admin); kata sandi sementara dikirim ke email (atau tercetak di console server jika SMTP belum diatur) dan wajib diganti saat login pertama.
+Pelanggan tidak bisa mendaftar sendiri. Akunnya dibuat oleh Admin lewat menu **Akun pelanggan**, dan kata sandi sementara wajib diganti saat login pertama.
 
-## 4. Email notifikasi
-Isi `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` di `.env` dengan akun email cPanel (mis. `no-reply@penilaistandaruji.com`, port 465, SSL).
-Jika `SMTP_HOST` kosong, isi email dicetak di console server (mode simulasi).
+## Konfigurasi email
 
-## 5. Deploy (VPS / cPanel)
+Isi `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, dan `SMTP_PASS` di `server/.env`. Jika `SMTP_HOST` dikosongkan, email tidak dikirim dan isinya hanya ditampilkan di console server.
+
+## Build dan deploy
+
 ```bash
 npm install
-npm run build        # menghasilkan client/dist
-npm start            # Express menyajikan API + client/dist di satu port
+npm run build   # membangun client ke client/dist
+npm start       # Express menyajikan API dan client di satu port
 ```
-- cPanel: buat **Setup Node.js App** dengan *Application root* = `server`, *startup file* = `src/index.js`, lalu atur variabel `.env` di panel.
-- VPS: jalankan dengan `pm2 start src/index.js --name silapp` dan arahkan subdomain `silapp.penilaistandaruji.com` lewat reverse proxy ke `PORT`.
-- Folder `server/uploads/` menyimpan dokumen; pastikan dapat ditulis dan ikut dibackup.
 
-## 6. Struktur folder
+Folder `server/uploads/` menyimpan dokumen unggahan, jadi pastikan folder itu dapat ditulis dan ikut dibackup.
+
+## Struktur folder
+
 ```
 silapp/
-├─ server/
-│  ├─ database/  schema.sql · seed.js · scope-data.js (ruang lingkup akreditasi)
-│  ├─ uploads/   dokumen unggahan & foto profil (tidak ikut git)
+├─ client/            frontend React
 │  └─ src/
-│     ├─ config/db.js          koneksi pool MySQL (prepared statement)
-│     ├─ config/migrate.js     tambah kolom baru otomatis saat server start (tanpa db:reset)
-│     ├─ middleware/auth.js    JWT + RBAC
-│     ├─ services/workflow.js  logika alur status (setujui, minta tindakan, abaikan, tolak)
-│     ├─ services/present.js   data untuk publik / pelanggan / admin (customer_visible)
-│     └─ routes/               auth · public · applications · admin · superadmin
-└─ client/
-   └─ src/
-      ├─ pages/public   Lacak, Layanan, Directory, Masuk, Ganti sandi
-      ├─ pages/client   Beranda, Ajukan (wizard), Pengajuan, Detail
-      ├─ pages/admin    Dashboard, Antrean, Detail + aksi, Akun pelanggan, Data sertifikat,
-      │                 Kelola pengguna, Master layanan, Form pengajuan, Daftar harga lab, Survei
-      ├─ pages/common   Pengaturan akun (foto profil, data diri)
-      ├─ components     ui.jsx (Sheet, Select, Menu, MobileList, SegProgress, animasi), ApplicationView, AppTable, Layouts
-      └─ styles         theme.css (token warna, komponen, animasi)
+│     ├─ components/  komponen bersama
+│     ├─ pages/       halaman public, client, admin, common
+│     ├─ hooks/  lib/
+│     └─ styles/
+└─ server/            backend Express
+   ├─ database/       schema.sql dan seed
+   ├─ uploads/        berkas unggahan (tidak ikut git)
+   └─ src/            config, middleware, routes, services
 ```
 
-## 7. Endpoint utama
-| Method | Endpoint | Akses |
-|---|---|---|
-| POST | /api/auth/login | publik |
-| POST | /api/auth/change-password | login |
-| PUT/POST/DELETE | /api/auth/profile · /api/auth/avatar (foto profil JPG/PNG maks. 2 MB) | login |
-| GET/POST/PUT | /api/customers · /:id/reset-password | admin, superadmin |
-| GET | /api/public/services · /services/:code/scope · /track/:code · /directory | publik |
-| GET/POST | /api/applications · /:id · /:id/reply · /:id/payment · /:id/invoice · /:id/findings/:fid/reply · /:id/findings/:fid/extension · /:id/survey · /:id/certificate | user |
-| GET | /api/admin/dashboard?months=6\|12 · /counts · /applications?status=&q= · /applications/:id | admin, superadmin |
-| POST | /api/admin/applications/:id/action  (setujui \| minta_tindakan \| abaikan \| tolak, + lampiran) | admin, superadmin |
-| POST | /api/admin/applications/:id/invoice · /payment/verify · /findings · /lab-info | admin, superadmin |
-| PATCH | /api/admin/applications/:id/findings/:fid (tutup \| ulang \| ubah \| perpanjang_setuju \| perpanjang_tolak) | admin, superadmin |
-| GET | /api/admin/applications/:id/documents-zip | superadmin |
-| CRUD | /api/certificates (data sertifikat & proyek lama) | superadmin, admin SP |
-| PATCH | /api/admin/applications/:id/parameters/:pid | admin, superadmin |
-| CRUD | /api/superadmin/users · /services · /steps · /prices · /forms · /fields · /documents · /survey | superadmin |
+## Pengembang
 
-## 8. Batasan prototype iterasi 2
-- 3 role login; jabatan dan bidang Admin dipakai untuk PIC & filter antrean, **belum** membatasi aksi per jabatan (independensi reviewer/decision maker hanya tercatat di audit trail).
-- Harga lab, pertanyaan survei, dan teks terima kasih masih data contoh sampai PSU mengirim data resmi.
-- Sub-status internal rinci, QR verifikasi sertifikat, notifikasi WhatsApp, surveilans, dan SLA otomatis (warning/overdue) belum diterapkan; kolom `sla_days` sudah tersedia.
-- Ruang lingkup Lab Mikrobiologi dan Lab Kalibrasi masih contoh.
+Ridzkal Jamil · Universitas Pelita Bangsa
