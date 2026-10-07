@@ -19,7 +19,7 @@ const STEPS = {
     ST('ST-09', 'Keputusan sertifikasi', 90), ST('ST-10', 'Sertifikat terbit', 100, { cert: 1 })],
   LAB: [ST('LAB-01', 'Permohonan diterima', 10), ST('LAB-02', 'Verifikasi, kontrak & pembayaran', 20, { pay: 1 }),
     ST('LAB-03', 'Sampel diterima & diregistrasi', 30), ST('LAB-04', 'Preparasi sampel', 40),
-    ST('LAB-05', 'Pengujian laboratorium', 65), ST('LAB-06', 'Review & verifikasi hasil', 80),
+    ST('LAB-05', 'Proses pengujian laboratorium', 65), ST('LAB-06', 'Review & verifikasi hasil', 80),
     ST('LAB-07', 'Penerbitan LHU', 95, { cert: 1 }), ST('LAB-08', 'LHU terbit', 100)],
   KAL: [ST('KAL-01', 'Permohonan diterima', 10), ST('KAL-02', 'Verifikasi, kontrak & pembayaran', 20, { pay: 1 }),
     ST('KAL-03', 'Alat diterima & diregistrasi', 30), ST('KAL-04', 'Persiapan kalibrasi', 40),
@@ -44,6 +44,57 @@ const SERVICES = [
 ];
 const FIS_PRODUCTS = ['Peralatan masak (cookware) dari logam', 'Peralatan makan & masak baja tahan karat (flatware)'];
 const MIK_PARAMS = ['Angka lempeng total (ALT)', 'Coliform', 'E. coli', 'Salmonella', 'Kapang & khamir'];
+
+/* ---------- form builder bawaan (bisa diubah Super Admin) ---------- */
+const FLD = (key, label, type = 'text', o = {}) => ({ key, label, type, ...o });
+const LAB_FIELDS = [FLD('kode_sampel', 'Kode / identitas sampel dari pelanggan'), FLD('keterangan', 'Keterangan tambahan', 'textarea')];
+const FIELDS = {
+  SP: [FLD('nama_pabrik', 'Nama pabrik', 'text', { req: 1 }), FLD('alamat_pabrik', 'Alamat pabrik', 'textarea', { req: 1 }),
+    FLD('kota_provinsi', 'Kota / provinsi pabrik', 'text', { req: 1 }), FLD('merek', 'Merek', 'text', { req: 1 }),
+    FLD('model', 'Jenis; spesifikasi; model'),
+    FLD('batch', 'Nomor batch / lot', 'text', { when: '1B' }), FLD('jumlah', 'Jumlah produk', 'text', { when: '1B' }),
+    FLD('shipment', 'Nomor shipment & invoice', 'text', { when: '1B' }), FLD('asal', 'Negara asal & pelabuhan', 'text', { when: '1B' })],
+  KIM: LAB_FIELDS, FIS: LAB_FIELDS, MIK: LAB_FIELDS,
+  KAL: [FLD('tanggal_diinginkan', 'Tanggal kalibrasi yang diinginkan', 'date')],
+};
+const DOC = (name, req = 0, pkg = 0) => ({ name, req, pkg });
+const LAB_DOCS = [DOC('Surat permohonan pengujian', 1), DOC('Data sampel / spesifikasi')];
+const DOCS = {
+  SP: [DOC('Surat permohonan', 1, 1), DOC('Akta perusahaan & NIB', 1), DOC('Spesifikasi produk'), DOC('Sertifikat merek'), DOC('Dokumen sistem mutu')],
+  KIM: LAB_DOCS, FIS: LAB_DOCS, MIK: LAB_DOCS,
+  KAL: [DOC('Surat permohonan kalibrasi', 1), DOC('Foto / data teknis alat')],
+};
+const SURVEY = [
+  'Kemudahan proses pengajuan melalui SILAPP',
+  'Kejelasan informasi persyaratan dan biaya',
+  'Ketepatan waktu penyelesaian layanan',
+  'Kompetensi dan profesionalisme personel PSU',
+  'Kemudahan memantau progres (tracking) pengajuan',
+  'Kesesuaian biaya dengan layanan yang diterima',
+  'Kepuasan secara keseluruhan terhadap layanan PSU',
+];
+const THANKS = 'Terima kasih telah meluangkan waktu mengisi Survei Kepuasan Pelanggan. Masukan Anda sangat berarti bagi kami untuk terus meningkatkan mutu layanan PT Penilai Standar Uji. Dokumen Anda kini dapat diunduh dan juga telah kami kirimkan ke email Anda.';
+// Proyek sertifikasi sebelum SILAPP (contoh/dummy)
+const LEGACY = [
+  ['PT Contoh Pangan Lestari', 'Kab. Bekasi, Jawa Barat', 'Biskuit', 'SNI 2973:2011', 'PSU-SPPT-2023-0012', '2023-03-14', 'aktif'],
+  ['CV Kopi Nusantara Contoh', 'Kab. Temanggung, Jawa Tengah', 'Kopi instan', 'SNI 2983:2014', 'PSU-SPPT-2022-0031', '2022-08-02', 'aktif'],
+  ['PT Gula Manis Contoh', 'Kab. Lampung Tengah, Lampung', 'Gula kristal putih', 'SNI 3140.3:2020', 'PSU-SPPT-2021-0007', '2021-05-19', 'tidak_aktif'],
+];
+/** Harga dummy per parameter (sudah termasuk PPN) — diganti daftar harga resmi PSU lewat menu Daftar harga lab. */
+const dummyPrice = (i) => 150000 + (i % 6) * 25000;
+
+/** PDF minimal untuk contoh sertifikat. */
+const samplePdf = (title) => {
+  const body = `BT /F1 18 Tf 72 720 Td (${title}) Tj ET\nBT /F1 11 Tf 72 690 Td (Contoh dokumen - SILAPP prototype) Tj ET`;
+  const objs = ['<< /Type /Catalog /Pages 2 0 R >>', '<< /Type /Pages /Kids [3 0 R] /Count 1 >>',
+    '<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> >>',
+    `<< /Length ${body.length} >>\nstream\n${body}\nendstream`, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>'];
+  let out = '%PDF-1.4\n'; const off = [];
+  objs.forEach((o, i) => { off.push(out.length); out += `${i + 1} 0 obj\n${o}\nendobj\n`; });
+  const x = out.length;
+  out += `xref\n0 ${objs.length + 1}\n0000000000 65535 f \n${off.map((o) => String(o).padStart(10, '0') + ' 00000 n \n').join('')}trailer\n<< /Size ${objs.length + 1} /Root 1 0 R >>\nstartxref\n${x}\n%%EOF`;
+  return out;
+};
 
 const USERS = [
   ['superadmin', 'Super Admin PSU', 'superadmin@penilaistandaruji.com', null, null, 'PT Penilai Standar Uji'],
@@ -89,13 +140,33 @@ const USERS = [
   }
   for (const lp of LAB_PRODUCTS) {
     const code = FIS_PRODUCTS.includes(lp.n) ? 'FIS' : 'KIM';
-    const [r] = await conn.query('INSERT INTO products (service_id, category, name) VALUES (?,?,?)', [svcId[code], lp.b, lp.n]);
-    for (const [name, method] of lp.p) {
-      await conn.query('INSERT INTO product_parameters (product_id, name, method) VALUES (?,?,?)', [r.insertId, name, method]);
+    let sum = 0;
+    const prices = lp.p.map((_, i) => { const v = dummyPrice(i); sum += v; return v; });
+    const [r] = await conn.query('INSERT INTO products (service_id, category, name, package_price) VALUES (?,?,?,?)', [svcId[code], lp.b, lp.n, Math.round((sum * 0.85) / 10000) * 10000]);
+    for (const [i, [name, method]] of lp.p.entries()) {
+      await conn.query('INSERT INTO product_parameters (product_id, name, method, price) VALUES (?,?,?,?)', [r.insertId, name, method, prices[i]]);
     }
   }
-  const [mik] = await conn.query('INSERT INTO products (service_id, category, name) VALUES (?,?,?)', [svcId.MIK, 'Mikrobiologi', 'Sampel pangan / minuman (contoh)']);
-  for (const n of MIK_PARAMS) await conn.query('INSERT INTO product_parameters (product_id, name) VALUES (?,?)', [mik.insertId, n]);
+  const [mik] = await conn.query('INSERT INTO products (service_id, category, name, package_price) VALUES (?,?,?,?)', [svcId.MIK, 'Mikrobiologi', 'Sampel pangan / minuman (contoh)', 800000]);
+  for (const [i, n] of MIK_PARAMS.entries()) await conn.query('INSERT INTO product_parameters (product_id, name, price) VALUES (?,?,?)', [mik.insertId, n, dummyPrice(i)]);
+
+  console.log('> form isian, berkas, survei, pengaturan ...');
+  for (const [code, list] of Object.entries(FIELDS)) {
+    for (const [i, f] of list.entries()) {
+      await conn.query('INSERT INTO service_fields (service_id, field_key, label, type, required, show_when, sort_order) VALUES (?,?,?,?,?,?,?)',
+        [svcId[code], f.key, f.label, f.type, f.req || 0, f.when || null, i]);
+    }
+  }
+  for (const [code, list] of Object.entries(DOCS)) {
+    for (const [i, d] of list.entries()) {
+      await conn.query('INSERT INTO service_documents (service_id, name, required, admin_if_package, sort_order) VALUES (?,?,?,?,?)', [svcId[code], d.name, d.req, d.pkg, i]);
+    }
+  }
+  for (const [i, t] of SURVEY.entries()) await conn.query('INSERT INTO survey_questions (question, sort_order) VALUES (?,?)', [t, i]);
+  await conn.query('INSERT INTO settings (skey, svalue) VALUES (?,?)', ['thank_you_text', THANKS]);
+  for (const l of LEGACY) {
+    await conn.query('INSERT INTO legacy_certificates (factory_name, factory_address, product, sni_no, certificate_no, issued_at, status) VALUES (?,?,?,?,?,?,?)', l);
+  }
 
   console.log('> akun demo (sandi: password123) ...');
   const hash = await bcrypt.hash('password123', 10);
@@ -108,38 +179,89 @@ const USERS = [
   }
 
   console.log('> pengajuan contoh ...');
+  const UP = path.join(__dirname, '..', 'uploads');
+  fs.mkdirSync(UP, { recursive: true });
+  // data lama dihapus, jadi file unggahan lama ikut dibersihkan
+  for (const f of fs.readdirSync(UP)) if (f !== '.gitkeep') fs.rmSync(path.join(UP, f), { force: true });
+  const putPdf = (name, title) => { fs.writeFileSync(path.join(UP, name), samplePdf(title)); return name; };
   const [[npk]] = await conn.query("SELECT id FROM products WHERE name='Pupuk NPK padat' AND service_id=?", [svcId.KIM]);
-  const [npkParams] = await conn.query('SELECT id, name, method FROM product_parameters WHERE product_id=? LIMIT 3', [npk.id]);
-  const [[beras]] = await conn.query("SELECT id FROM products WHERE name='Beras' AND service_id=?", [svcId.SP]);
+  const [npkParams] = await conn.query('SELECT id, name, method, price FROM product_parameters WHERE product_id=? LIMIT 3', [npk.id]);
+  const prod = async (name) => (await conn.query('SELECT id, name, standard_no FROM products WHERE name=? AND service_id=?', [name, svcId.SP]))[0][0];
+  const beras = await prod('Beras'), kopi = await prod('Kopi instan'), minyak = await prod('Minyak goreng sawit');
+  const ago = (d) => new Date(Date.now() - d * 86400000);
+  const ymd = (d) => d.toISOString().slice(0, 10);
+  const addMonths = (d, m) => { const x = new Date(d); x.setMonth(x.getMonth() + m); return x; };
+  const spDetails = (pabrik, alamat, kota, merek) => [['nama_pabrik', 'Nama pabrik', pabrik], ['alamat_pabrik', 'Alamat pabrik', alamat], ['kota_provinsi', 'Kota / provinsi pabrik', kota], ['merek', 'Merek', merek]];
+
   const samples = [
-    // [no, code, user, svc, product_id, label, step, status, pay, extra]
-    ['PSU-SP-2609-0001', 'SLP-X2KD-4M7A', 'rina', 'SP', beras.id, 'Beras · SNI 6128:2020', 6, 'aktif', 'terverifikasi', { scheme: 'Sesuai acuan', type: 'Sertifikasi baru' }],
-    ['PSU-KIM-2609-0001', 'SLP-C7WD-2KPM', 'rina', 'KIM', npk.id, 'Pupuk NPK padat (2 sampel)', 5, 'aktif', 'terverifikasi', { params: true }],
-    ['PSU-KAL-2610-0001', 'SLP-9RTE-3LQW', 'dimas', 'KAL', null, 'Timbangan digital AND FX-3000i', 1, 'aktif', 'belum', { location: 'lab' }],
+    // SP di ST-06, sudah audit dengan temuan
+    { no: 'PSU-SP-2609-0001', code: 'SLP-X2KD-4M7A', u: 'rina', svc: 'SP', pid: beras.id, label: `Beras · ${beras.standard_no}`, step: 6, pay: 'terverifikasi', amount: 27750000,
+      scheme: null, type: 'Sertifikasi baru', details: spDetails('PT Sinar Contoh Abadi – Pabrik Karawang', 'Jl. Industri Contoh No. 8, Kawasan KIIC', 'Kab. Karawang, Jawa Barat', 'Beras Sinar'),
+      audit: 3, findings: [['minor', 'Catatan pemantauan suhu gudang tidak lengkap untuk 2 minggu terakhir.'], ['observasi', 'Label palet sebaiknya mencantumkan tanggal penerimaan.']] },
+    // Lab kimia di LAB-05
+    { no: 'PSU-KIM-2609-0001', code: 'SLP-C7WD-2KPM', u: 'rina', svc: 'KIM', pid: npk.id, label: 'Pupuk NPK padat (2 sampel)', step: 5, pay: 'terverifikasi', params: true, details: [['kode_sampel', 'Kode / identitas sampel dari pelanggan', 'NPK-B12']] },
+    // Kalibrasi baru masuk
+    { no: 'PSU-KAL-2610-0001', code: 'SLP-9RTE-3LQW', u: 'dimas', svc: 'KAL', pid: null, label: 'Timbangan digital AND FX-3000i', step: 1, pay: 'belum', location: 'lab' },
+    // SP paket LSPro + Lab di ST-03, invoice belum terbit
+    { no: 'PSU-SP-2610-0002', code: 'SLP-M4PQ-7HZT', u: 'dimas', svc: 'SP', pid: kopi.id, label: `Kopi instan · ${kopi.standard_no} · Tipe 5`, step: 3, pay: 'belum', scheme: 'Tipe 5', type: 'Sertifikasi baru', pkg: 1,
+      details: spDetails('CV Tani Subur Persada', 'Jl. Raya Contoh Km 4', 'Kab. Malang, Jawa Timur', 'Kopi Subur'), docs: ['Akta perusahaan & NIB', 'Spesifikasi produk'] },
+    // SP selesai, sertifikat terbit, survei belum diisi
+    { no: 'PSU-SP-2608-0003', code: 'SLP-R8NB-5JVC', u: 'rina', svc: 'SP', pid: minyak.id, label: `Minyak goreng sawit · ${minyak.standard_no} · Tipe 5`, step: 10, pay: 'terverifikasi', amount: 31080000, scheme: 'Tipe 5', type: 'Sertifikasi baru', done: 'PSU-SPPT-2026-0001',
+      details: spDetails('PT Sinar Contoh Abadi – Pabrik Cikarang', 'Jl. Contoh Raya Blok C-5, Cikarang', 'Kab. Bekasi, Jawa Barat', 'Sinar Gold') },
   ];
-  for (const [no, code, u, svc, pid, label, step, status, pay, ex] of samples) {
+  for (const x of samples) {
     const [r] = await conn.query(
-      'INSERT INTO applications (application_no, tracking_code, user_id, service_id, product_id, product_label, current_step_order, status, payment_status, scheme, application_type, location) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',
-      [no, code, uid[u], svcId[svc], pid, label, step, status, pay, ex.scheme || null, ex.type || null, ex.location || null]);
-    const [steps] = await conn.query('SELECT * FROM service_steps WHERE service_id=? ORDER BY step_order', [svcId[svc]]);
-    for (let i = 1; i <= step; i++) {
+      `INSERT INTO applications (application_no, tracking_code, user_id, service_id, product_id, product_label, current_step_order, status, payment_status,
+         scheme, application_type, location, is_package, nc_flag, audit_report_date, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+      [x.no, x.code, uid[x.u], svcId[x.svc], x.pid, x.label, x.step, x.done ? 'selesai' : 'aktif', x.pay, x.scheme || null, x.type || null, x.location || null,
+        x.pkg || 0, x.findings ? 1 : 0, x.audit ? ymd(ago(x.audit)) : null, ago(x.step * 2 + 1)]);
+    const id = r.insertId;
+    const [steps] = await conn.query('SELECT * FROM service_steps WHERE service_id=? ORDER BY step_order', [svcId[x.svc]]);
+    for (let i = 1; i <= x.step; i++) {
       const st = steps[i - 1];
-      if (st.is_optional) continue;
-      const d = new Date(Date.now() - (step - i + 1) * 2 * 86400000);
+      if (st.is_optional && !x.findings) continue;
+      if (st.is_optional && i > x.step) continue;
       await conn.query(
         'INSERT INTO status_logs (application_id, step_order, status_code, step_name, action, note, pic_label, created_at) VALUES (?,?,?,?,?,?,?,?)',
-        [r.insertId, i, st.status_code, st.name, i === 1 ? 'buat' : 'mulai', i === 1 ? 'Pengajuan dibuat oleh pelanggan.' : 'Tahap dimulai.', i === 1 ? 'Pelanggan' : 'Admin', d]);
+        [id, i, st.status_code, st.name, i === 1 ? 'buat' : 'mulai', i === 1 ? 'Pengajuan dibuat oleh pelanggan.' : 'Tahap dimulai.', i === 1 ? 'Pelanggan' : 'Admin', ago((x.step - i + 1) * 2)]);
     }
-    if (ex.params) {
+    for (const [key, label, value] of x.details || []) {
+      await conn.query('INSERT INTO application_details (application_id, field_key, field_label, field_value) VALUES (?,?,?,?)', [id, key, label, value]);
+    }
+    if (x.params) {
       for (const [k, p] of npkParams.entries()) {
-        await conn.query('INSERT INTO application_parameters (application_id, parameter_id, name, method, status) VALUES (?,?,?,?,?)',
-          [r.insertId, p.id, p.name, p.method, k === 0 ? 'selesai' : k === 1 ? 'uji' : 'antri']);
+        await conn.query('INSERT INTO application_parameters (application_id, parameter_id, name, method, price_snapshot, status) VALUES (?,?,?,?,?,?)',
+          [id, p.id, p.name, p.method, p.price, k === 0 ? 'selesai' : k === 1 ? 'uji' : 'antri']);
       }
-      await conn.query('INSERT INTO samples (application_id, description, quantity) VALUES (?,?,?)', [r.insertId, 'Pupuk NPK padat', 2]);
+      await conn.query('INSERT INTO samples (application_id, description, quantity) VALUES (?,?,?)', [id, 'Pupuk NPK padat', 2]);
+      x.amount = npkParams.reduce((t, p) => t + +p.price, 0) * 2;
     }
-    if (svc === 'KAL') {
+    if (x.pay === 'terverifikasi') {
+      const dpp = Math.round(x.amount / 1.11);
+      await conn.query(`INSERT INTO payments (application_id, invoice_no, amount, dpp, ppn, items, status, proof_path, paid_at, verified_at, created_at)
+        VALUES (?,?,?,?,?,?,?,?,?,?,?)`, [id, `INV/PSU/2026/${String(id).padStart(5, '0')}`, x.amount, dpp, x.amount - dpp,
+        JSON.stringify([{ label: 'Biaya layanan', amount: x.amount }]), 'terverifikasi', putPdf(`seed-bukti-${id}.pdf`, 'Bukti transfer (contoh)'), ago(x.step), ago(x.step), ago(x.step + 1)]);
+    }
+    for (const d of x.docs || []) {
+      await conn.query('INSERT INTO documents (application_id, doc_type, original_name, file_path, step_order, uploaded_by) VALUES (?,?,?,?,?,?)',
+        [id, d, `${d.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.pdf`, putPdf(`seed-${id}-${d.length}.pdf`, d), 1, uid[x.u]]);
+    }
+    if (x.findings) {
+      const rep = ago(x.audit);
+      for (const [cat, desc] of x.findings) {
+        const due = cat === 'mayor' ? addMonths(rep, 1) : cat === 'minor' ? addMonths(rep, 2) : null;
+        await conn.query('INSERT INTO findings (application_id, category, description, report_date, due_date) VALUES (?,?,?,?,?)', [id, cat, desc, ymd(rep), due ? ymd(due) : null]);
+      }
+      await conn.query(`INSERT INTO status_logs (application_id, step_order, status_code, step_name, action, note, pic_label, created_at)
+        VALUES (?,?,?,?,?,?,?,?)`, [id, 5, 'ST-05', steps[4].name, 'temuan', 'Laporan audit terbit dengan 1 temuan minor dan 1 observasi. Mohon perbaiki sebelum tenggat.', 'Admin', ago(x.audit)]);
+    }
+    if (x.done) {
+      await conn.query('INSERT INTO certificates (application_id, certificate_no, issued_at, file_path) VALUES (?,?,?,?)',
+        [id, x.done, ymd(ago(1)), putPdf(`seed-sertifikat-${id}.pdf`, `Sertifikat SPPT SNI ${x.done}`)]);
+    }
+    if (x.svc === 'KAL') {
       await conn.query('INSERT INTO equipment (application_id, name, brand_model, serial_number, range_capacity, resolution, calibration_points) VALUES (?,?,?,?,?,?,?)',
-        [r.insertId, 'Timbangan digital', 'AND FX-3000i', '12345678', '0–3100 g', '0,01 g', '500, 1000, 2000, 3000 g']);
+        [id, 'Timbangan digital', 'AND FX-3000i', '12345678', '0–3100 g', '0,01 g', '500, 1000, 2000, 3000 g']);
     }
   }
   await conn.end();

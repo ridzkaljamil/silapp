@@ -1,7 +1,10 @@
 const jwt = require('jsonwebtoken');
 const { one } = require('../config/db');
 
-/** Wajib login: membaca token Bearer dan memuat data user terbaru. */
+/**
+ * Wajib login: membaca token Bearer dan memuat data user terbaru.
+ * Akun yang dibuat Admin (sandi sementara) wajib ganti sandi dulu sebelum memakai fitur lain.
+ */
 async function requireAuth(req, res, next) {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
@@ -9,13 +12,16 @@ async function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const user = await one(
-      'SELECT id, role, name, email, jabatan, bidang, company_name, is_active FROM users WHERE id=?', [payload.id]);
+      'SELECT id, role, name, email, jabatan, bidang, company_name, phone, address, avatar, is_active, must_change_password FROM users WHERE id=?', [payload.id]);
     if (!user || !user.is_active) return res.status(401).json({ message: 'Akun tidak aktif.' });
     req.user = user;
-    next();
   } catch {
     return res.status(401).json({ message: 'Sesi berakhir, silakan masuk kembali.' });
   }
+  if (req.user.must_change_password && !req.originalUrl.startsWith('/api/auth/')) {
+    return res.status(403).json({ code: 'MUST_CHANGE_PASSWORD', message: 'Silakan ganti kata sandi sementara terlebih dahulu.' });
+  }
+  next();
 }
 
 /** RBAC: batasi endpoint untuk role tertentu. */

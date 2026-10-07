@@ -24,7 +24,7 @@ router.get('/services/:code/scope', async (req, res, next) => {
   try {
     const s = await one('SELECT id FROM services WHERE code=?', [req.params.code]);
     if (!s) return res.status(404).json({ message: 'Layanan tidak ditemukan.' });
-    const products = await q('SELECT id, category, sub_category, name, standard_no, scheme_reference, scheme_types FROM products WHERE service_id=? ORDER BY id', [s.id]);
+    const products = await q('SELECT id, category, sub_category, name, standard_no, scheme_reference, scheme_types, package_price FROM products WHERE service_id=? ORDER BY id', [s.id]);
     const params = await q('SELECT pp.id, pp.product_id, pp.name, pp.method, pp.price FROM product_parameters pp JOIN products p ON p.id=pp.product_id WHERE p.service_id=? ORDER BY pp.id', [s.id]);
     res.json(products.map((p) => ({ ...p, parameters: params.filter((x) => x.product_id === p.id) })));
   } catch (e) { next(e); }
@@ -39,13 +39,38 @@ router.get('/track/:code', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
-/** Directory publik: sertifikat/LHU yang terbit, data terbatas. */
+/** Form pengajuan per layanan (form builder): isian tambahan + daftar berkas. */
+router.get('/services/:code/form', async (req, res, next) => {
+  try {
+    const s = await one('SELECT id FROM services WHERE code=?', [req.params.code]);
+    if (!s) return res.status(404).json({ message: 'Layanan tidak ditemukan.' });
+    res.json({
+      fields: await q('SELECT field_key `key`, label, type, options, required, show_when FROM service_fields WHERE service_id=? AND is_active=1 ORDER BY sort_order, id', [s.id]),
+      documents: await q('SELECT id, name, required, admin_if_package FROM service_documents WHERE service_id=? AND is_active=1 ORDER BY sort_order, id', [s.id]),
+    });
+  } catch (e) { next(e); }
+});
+
+/**
+ * Directory publik: perusahaan bersertifikat Sertifikasi Produk
+ * (terbit lewat SILAPP + proyek sebelum SILAPP). Status Aktif & Tidak Aktif ditampilkan.
+ */
 router.get('/directory', async (req, res, next) => {
   try {
-    res.json(await q(`SELECT c.certificate_no, c.issued_at, c.status, u.company_name, s.name service_name, a.product_label
-      FROM certificates c JOIN applications a ON a.id=c.application_id JOIN users u ON u.id=a.user_id JOIN services s ON s.id=a.service_id
-      WHERE c.show_in_directory=1 AND a.status='selesai' ORDER BY c.issued_at DESC`));
+    const { SILAPP_SQL } = require('./certificates');
+    const silapp = await q(`${SILAPP_SQL} AND c.show_in_directory=1`);
+    const legacy = await q('SELECT certificate_no, issued_at, status, factory_name, factory_address, product, sni_no FROM legacy_certificates');
+    const pick = ({ certificate_no, issued_at, status, factory_name, factory_address, product, sni_no }) => ({ certificate_no, issued_at, status, factory_name, factory_address, product, sni_no });
+    res.json([...silapp, ...legacy].map(pick).sort((a, b) => String(b.issued_at).localeCompare(String(a.issued_at))));
   } catch (e) { next(e); }
+});
+
+/** Foto profil pengguna (nama file acak, hanya pola avatar-*). */
+router.get('/avatar/:file', (req, res) => {
+  const f = req.params.file;
+  if (!/^avatar-\d+-[a-f0-9]+\.(png|jpe?g)$/.test(f)) return res.status(404).end();
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.sendFile(require('path').join(require('../utils/upload').UPLOAD_DIR, f), (err) => err && !res.headersSent && res.status(404).end());
 });
 
 module.exports = router;

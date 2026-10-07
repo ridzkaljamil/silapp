@@ -11,6 +11,9 @@ api.interceptors.request.use((config) => {
 api.interceptors.response.use(
   (r) => r,
   (err) => {
+    if (err.response?.data?.code === 'MUST_CHANGE_PASSWORD' && !location.pathname.startsWith('/ganti-sandi')) {
+      location.href = '/ganti-sandi';
+    }
     if (err.response?.status === 401 && localStorage.getItem('silapp_token')) {
       localStorage.removeItem('silapp_token');
       localStorage.removeItem('silapp_user');

@@ -18,6 +18,8 @@ app.use('/api/public', require('./routes/public'));
 app.use('/api/applications', require('./routes/applications'));
 app.use('/api/admin', require('./routes/admin'));
 app.use('/api/superadmin', require('./routes/superadmin'));
+app.use('/api/customers', require('./routes/customers'));
+app.use('/api/certificates', require('./routes/certificates').router);
 app.get('/api/health', (req, res) => res.json({ ok: true }));
 
 // Produksi: sajikan hasil build React dari client/dist (satu domain, satu proses)
@@ -29,11 +31,14 @@ if (fs.existsSync(dist)) {
 
 // Penanganan error terpusat
 app.use((err, req, res, next) => {
-  if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ message: 'Ukuran file maksimal 10 MB.' });
+  if (err.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ message: `Ukuran file maksimal ${req.path.endsWith('/avatar') ? '2' : '10'} MB.` });
   const status = err.status || (err.message && err.message.startsWith('Format file') ? 400 : 500);
   if (status === 500) console.error(err);
   res.status(status).json({ message: status === 500 ? 'Terjadi kesalahan pada server.' : err.message });
 });
 
 const port = +process.env.PORT || 5000;
-app.listen(port, () => console.log(`SILAPP API berjalan di http://localhost:${port}`));
+// Pastikan kolom baru ada (database lama tidak perlu di-reset), lalu jalankan server.
+require('./config/migrate')()
+  .catch((e) => console.warn('Migrasi otomatis dilewati:', e.message))
+  .finally(() => app.listen(port, () => console.log(`SILAPP API berjalan di http://localhost:${port}`)));

@@ -1,4 +1,4 @@
-# SILAPP · Prototype Iterasi 1
+# SILAPP · Prototype Iterasi 2 (tampilan Opsi A)
 
 **Sistem Informasi Layanan dan Tracking Pengujian Produk** untuk PT Penilai Standar Uji.
 Stack: **React (Vite) + Bootstrap 5 + Axios** · **Node.js + Express** · **MySQL** · JWT + RBAC · bcrypt · Multer · Nodemailer.
@@ -7,9 +7,12 @@ Alur status mengikuti tiga dokumen *Rancangan Sistem Tracking* perusahaan:
 
 | Layanan | Status tracking | Catatan |
 |---|---|---|
-| Sertifikasi Produk (LSPro) | ST-01 s.d. ST-10 | ST-07 Tindakan perbaikan hanya jika ada ketidaksesuaian; Tipe 5 & Tipe 1B |
-| Lab Kimia / Fisika / Mikrobiologi | LAB-01 s.d. LAB-08 | LAB-05 terkunci sampai semua parameter selesai |
+| Sertifikasi Produk (LSPro) | ST-01 s.d. ST-10 | ST-03 selesai otomatis (bayar terverifikasi + berkas diunduh Super Admin); ST-07 hanya jika ada temuan/ketidaksesuaian; Tipe 5 & Tipe 1B |
+| Lab Kimia / Fisika / Mikrobiologi | LAB-01 s.d. LAB-08 | LAB-05 Proses pengujian laboratorium terkunci sampai semua parameter selesai |
 | Lab Kalibrasi | KAL-01 s.d. KAL-09 | KAL-09 Pengembalian alat dilewati untuk kalibrasi on-site |
+
+Tampilan memakai desain **Opsi A · Clean Workspace** (Plus Jakarta Sans, navy #0D2040 + emas #C59B27, latar polos #F6F7F9), responsif untuk HP:
+sidebar bisa disembunyikan, menu bawah untuk pelanggan, daftar ringkas + lembar detail dari bawah, dan animasi halus di semua halaman.
 
 ---
 
@@ -58,7 +61,9 @@ Semua kata sandi: **password123**
 | User | rina@sinarcontoh.co.id | PT Sinar Contoh Abadi |
 | User | dimas@tanisubur.co.id | CV Tani Subur Persada |
 
-Kode lacak contoh (tanpa login): `SLP-X2KD-4M7A`, `SLP-C7WD-2KPM`, `SLP-9RTE-3LQW`.
+Kode lacak contoh (tanpa login): `SLP-X2KD-4M7A`, `SLP-C7WD-2KPM`, `SLP-9RTE-3LQW`, `SLP-M4PQ-7HZT`, `SLP-R8NB-5JVC`.
+
+Tidak ada pendaftaran mandiri. Akun pelanggan baru dibuat lewat menu **Akun pelanggan** (Admin/Super Admin); kata sandi sementara dikirim ke email (atau tercetak di console server jika SMTP belum diatur) dan wajib diganti saat login pertama.
 
 ## 4. Email notifikasi
 Isi `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS` di `.env` dengan akun email cPanel (mis. `no-reply@penilaistandaruji.com`, port 465, SSL).
@@ -79,33 +84,45 @@ npm start            # Express menyajikan API + client/dist di satu port
 silapp/
 ├─ server/
 │  ├─ database/  schema.sql · seed.js · scope-data.js (ruang lingkup akreditasi)
+│  ├─ uploads/   dokumen unggahan & foto profil (tidak ikut git)
 │  └─ src/
 │     ├─ config/db.js          koneksi pool MySQL (prepared statement)
+│     ├─ config/migrate.js     tambah kolom baru otomatis saat server start (tanpa db:reset)
 │     ├─ middleware/auth.js    JWT + RBAC
 │     ├─ services/workflow.js  logika alur status (setujui, minta tindakan, abaikan, tolak)
 │     ├─ services/present.js   data untuk publik / pelanggan / admin (customer_visible)
 │     └─ routes/               auth · public · applications · admin · superadmin
 └─ client/
    └─ src/
-      ├─ pages/public   Lacak, Layanan, Directory, Masuk, Daftar
+      ├─ pages/public   Lacak, Layanan, Directory, Masuk, Ganti sandi
       ├─ pages/client   Beranda, Ajukan (wizard), Pengajuan, Detail
-      ├─ pages/admin    Dashboard, Antrean, Detail + aksi, Kelola pengguna, Master layanan
-      └─ components     Stepper, Progress, StatusPill, ApplicationView, Layouts
+      ├─ pages/admin    Dashboard, Antrean, Detail + aksi, Akun pelanggan, Data sertifikat,
+      │                 Kelola pengguna, Master layanan, Form pengajuan, Daftar harga lab, Survei
+      ├─ pages/common   Pengaturan akun (foto profil, data diri)
+      ├─ components     ui.jsx (Sheet, Select, Menu, MobileList, SegProgress, animasi), ApplicationView, AppTable, Layouts
+      └─ styles         theme.css (token warna, komponen, animasi)
 ```
 
 ## 7. Endpoint utama
 | Method | Endpoint | Akses |
 |---|---|---|
-| POST | /api/auth/register · /api/auth/login | publik |
+| POST | /api/auth/login | publik |
+| POST | /api/auth/change-password | login |
+| PUT/POST/DELETE | /api/auth/profile · /api/auth/avatar (foto profil JPG/PNG maks. 2 MB) | login |
+| GET/POST/PUT | /api/customers · /:id/reset-password | admin, superadmin |
 | GET | /api/public/services · /services/:code/scope · /track/:code · /directory | publik |
-| GET/POST | /api/applications · /:id · /:id/reply · /:id/payment · /:id/certificate | user |
-| GET | /api/admin/dashboard · /applications?status=&q= · /applications/:id | admin, superadmin |
-| POST | /api/admin/applications/:id/action  (setujui \| minta_tindakan \| abaikan \| tolak) | admin, superadmin |
+| GET/POST | /api/applications · /:id · /:id/reply · /:id/payment · /:id/invoice · /:id/findings/:fid/reply · /:id/findings/:fid/extension · /:id/survey · /:id/certificate | user |
+| GET | /api/admin/dashboard?months=6\|12 · /counts · /applications?status=&q= · /applications/:id | admin, superadmin |
+| POST | /api/admin/applications/:id/action  (setujui \| minta_tindakan \| abaikan \| tolak, + lampiran) | admin, superadmin |
+| POST | /api/admin/applications/:id/invoice · /payment/verify · /findings · /lab-info | admin, superadmin |
+| PATCH | /api/admin/applications/:id/findings/:fid (tutup \| ulang \| ubah \| perpanjang_setuju \| perpanjang_tolak) | admin, superadmin |
+| GET | /api/admin/applications/:id/documents-zip | superadmin |
+| CRUD | /api/certificates (data sertifikat & proyek lama) | superadmin, admin SP |
 | PATCH | /api/admin/applications/:id/parameters/:pid | admin, superadmin |
-| CRUD | /api/superadmin/users · /services · /steps | superadmin |
+| CRUD | /api/superadmin/users · /services · /steps · /prices · /forms · /fields · /documents · /survey | superadmin |
 
-## 8. Batasan prototype iterasi 1
+## 8. Batasan prototype iterasi 2
 - 3 role login; jabatan dan bidang Admin dipakai untuk PIC & filter antrean, **belum** membatasi aksi per jabatan (independensi reviewer/decision maker hanya tercatat di audit trail).
-- Harga parameter belum diisi; penawaran/invoice belum dihitung otomatis.
+- Harga lab, pertanyaan survei, dan teks terima kasih masih data contoh sampai PSU mengirim data resmi.
 - Sub-status internal rinci, QR verifikasi sertifikat, notifikasi WhatsApp, surveilans, dan SLA otomatis (warning/overdue) belum diterapkan; kolom `sla_days` sudah tersedia.
 - Ruang lingkup Lab Mikrobiologi dan Lab Kalibrasi masih contoh.

@@ -13,15 +13,17 @@ if (process.env.SMTP_HOST) {
 /**
  * Kirim email notifikasi. Jika SMTP belum diatur, email dicetak di console
  * supaya alur tetap bisa diuji tanpa server email.
+ * attachments: [{ filename, path }] (opsional)
  */
-async function sendMail(to, subject, text) {
+async function sendMail(to, subject, text, attachments = []) {
   if (!to) return;
   if (!transporter) {
-    console.log(`[email-simulasi] ke=${to} | ${subject}\n${text}\n`);
+    const att = attachments.length ? `\n[lampiran: ${attachments.map((a) => a.filename).join(', ')}]` : '';
+    console.log(`[email-simulasi] ke=${to} | ${subject}\n${text}${att}\n`);
     return;
   }
   try {
-    await transporter.sendMail({ from: process.env.MAIL_FROM, to, subject, text });
+    await transporter.sendMail({ from: process.env.MAIL_FROM, to, subject, text, attachments });
   } catch (e) {
     console.error('[email] gagal mengirim:', e.message);
   }
