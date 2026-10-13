@@ -13,7 +13,7 @@ export default function AppTable({ rows, base, showCompany, empty = 'Tidak ada p
     <>
       <div className="app-table table-responsive">
         <table className="table table-hover align-middle">
-          <thead><tr><th>Pengajuan</th>{showCompany && <th>Perusahaan</th>}<th>Tahap saat ini</th><th style={{ width: 170 }}>Progres</th><th>Status</th><th>Diajukan</th></tr></thead>
+          <thead><tr><th>Pengajuan</th>{showCompany && <th>Perusahaan</th>}<th>Tahap Saat Ini</th><th style={{ width: 170 }}>Progres</th><th>Status</th><th>Diajukan</th></tr></thead>
           <tbody>
             {rows.map((a) => (
               <tr key={a.id} className="clickable" onClick={() => nav(`${base}/${a.id}`)}>
@@ -35,7 +35,7 @@ export default function AppTable({ rows, base, showCompany, empty = 'Tidak ada p
               <div style={{ minWidth: 0 }}><b>{a.product_label.split(' · ')[0]}</b><div className="small text-muted2">{a.service_name} · <span className="mono">{a.application_no}</span></div>{showCompany && <div className="small">{a.company_name}</div>}</div>
               <StatusPill value={a.condition} />
             </div>
-            <div className="d-flex align-items-center gap-2 small"><span className="pbar flex-grow-1"><i style={{ width: `${a.progress}%` }} /></span>{a.progress}%</div>
+            <div className="d-flex align-items-center gap-2 small"><span className={`pbar flex-grow-1 ${a.progress === 100 ? 'ok' : ''}`}><i style={{ width: `${a.progress}%` }} /></span>{a.progress}%</div>
             <div className="small text-muted2">{a.status === 'selesai' ? 'Selesai' : <>Tahap {a.current_step.index}/{a.current_step.total} · {a.current_step.name}</>}</div>
           </Link>
         ))}

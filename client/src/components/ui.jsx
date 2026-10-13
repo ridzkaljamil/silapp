@@ -6,6 +6,7 @@
  *   components/overlays.jsx Sheet (pop-up / lembar bawah), Menu
  *   components/forms.jsx    Select (dropdown), FileDrop
  *   components/MobileList.jsx daftar ringkas HP
+ *   components/DataToolbar.jsx kolom cari + filter daftar data
  *   hooks/useReveal.js      animasi muncul saat scroll
  */
 export * from '../lib/format';
@@ -14,4 +15,6 @@ export * from './feedback';
 export * from './overlays';
 export * from './forms';
 export * from './MobileList';
+export * from './DataToolbar';
 export * from '../hooks/useReveal';
+export * from './Pager';

@@ -1,11 +1,14 @@
 /** Beranda pelanggan: tugas yang perlu dilakukan + daftar pengajuan. */
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import api, { download } from '../../api';
+import api from '../../api';
+import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import { useAuth } from '../../AuthContext';
 import { Loading, rupiah, fmtDate } from '../../components/ui';
 import AppTable from '../../components/AppTable';
 import { docWord } from '../../lib/constants';
+import { useContact, waLink } from '../../lib/contact';
+import { DraftCard } from './Ajukan';
 
 const dayDiff = (d) => (d ? Math.round((new Date(`${d}T00:00:00`) - new Date(new Date().toDateString())) / 86400000) : null);
 
@@ -13,7 +16,15 @@ export default function Beranda() {
   const { user } = useAuth();
   const [rows, setRows] = useState(null);
   const [tab, setTab] = useState('jalan');
-  useEffect(() => { api.get('/applications').then((r) => setRows(r.data)); }, []);
+  const [draft, setDraft] = useState(null);
+  const contact = useContact();
+  const load = useCallback(() => api.get('/applications').then((r) => setRows(r.data)), []);
+  useEffect(() => {
+    load();
+    api.get('/drafts').then((r) => setDraft(r.data)).catch(() => {});
+  }, [load]);
+  useLiveRefresh(load);
+  const discard = () => api.delete('/drafts').then(() => setDraft(null)).catch(() => {});
   if (!rows) return <Loading />;
   const todo = rows.flatMap((a) => {
     const name = a.product_label.split(' · ')[0];
@@ -34,12 +45,13 @@ export default function Beranda() {
   return (
     <>
       <div className="page-head home-head">
-        <div><div className="small text-muted2">{hari}</div><h1>Selamat datang, {user.name.split(' ')[0]}</h1></div>
-        <Link to="/klien/ajukan" className="btn btn-primary home-cta"><i className="bi bi-plus-lg" />Ajukan layanan</Link>
+        <div><div className="small text-muted2">{hari}</div><h1>Selamat Datang, {user.name.split(' ')[0]}</h1></div>
+        <Link to="/klien/ajukan" className="btn btn-primary home-cta"><i className="bi bi-plus-lg" />Ajukan Layanan</Link>
       </div>
+      {draft && <DraftCard d={draft} to="/klien/ajukan?draft=1" onDiscard={discard} />}
       {todo.length > 0 && (
         <section className="mb-4">
-          <h2 className="mb-2">Perlu tindakan Anda <span className="text-muted2 fw-normal">· {todo.length}</span></h2>
+          <h2 className="mb-2">Perlu Tindakan Anda <span className="text-muted2 fw-normal">· {todo.length}</span></h2>
           <div className="todo-cards">
             {todo.map((x) => (
               <Link key={x.a.id} to={`/klien/pengajuan/${x.a.id}`} className="todo-card">
@@ -62,17 +74,20 @@ export default function Beranda() {
       )}
       <section className="panel mb-4">
         <div className="panel-h">
-          <h2 className="mb-0">Pengajuan saya</h2>
+          <h2 className="mb-0">Pengajuan Terbaru</h2>
           <div className="segmented" role="group" aria-label="Filter">
             <button aria-pressed={tab === 'jalan'} onClick={() => setTab('jalan')}>Berjalan · {jalan.length}</button>
             <button aria-pressed={tab === 'selesai'} onClick={() => setTab('selesai')}>Selesai · {selesai.length}</button>
           </div>
         </div>
-        <AppTable rows={tab === 'jalan' ? jalan : selesai} base="/klien/pengajuan" empty={tab === 'jalan' ? 'Belum ada pengajuan berjalan.' : 'Belum ada pengajuan selesai.'} />
+        <AppTable rows={(tab === 'jalan' ? jalan : selesai).slice(0, 5)} base="/klien/pengajuan" empty={tab === 'jalan' ? 'Belum ada pengajuan berjalan.' : 'Belum ada pengajuan selesai.'} />
+        {(tab === 'jalan' ? jalan : selesai).length > 5 && (
+          <div className="panel-f justify-content-center"><Link to="/klien/pengajuan" className="btn btn-link fw-semibold">Lihat Semua Pengajuan ({rows.length})<i className="bi bi-arrow-right" /></Link></div>
+        )}
       </section>
       <div className="help-cards">
-        <Link to="/klien/lacak" className="help-card"><span className="ic"><i className="bi bi-search" /></span><span><b>Lacak dengan kode</b><span>Bagikan kode lacak ke tim Anda, bisa dibuka tanpa login</span></span></Link>
-        <Link to="/layanan" className="help-card"><span className="ic"><i className="bi bi-telephone" /></span><span><b>Butuh bantuan?</b><span>Hubungi contact person layanan PSU</span></span></Link>
+        <Link to="/klien/template" className="help-card"><span className="ic"><i className="bi bi-file-earmark-word" /></span><span><b>Template Dokumen</b><span>Unduh surat permohonan dan pernyataan sebelum mengajukan</span></span></Link>
+        <a href={waLink(contact.phone, 'Halo PSU, saya butuh bantuan terkait pengajuan di SILAPP.')} target="_blank" rel="noreferrer" className="help-card"><span className="ic"><i className="bi bi-whatsapp" /></span><span><b>Butuh bantuan?</b><span>Chat tim PSU lewat WhatsApp</span></span></a>
       </div>
     </>
   );

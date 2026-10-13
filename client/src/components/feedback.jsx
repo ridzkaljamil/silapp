@@ -30,7 +30,7 @@ export function ConfirmProvider({ children }) {
             <div className="text-muted2">{st.body}</div>
             <div className="ui-modal-actions">
               <button className="btn btn-outline-secondary" onClick={() => close(false)}>{st.cancel || 'Batal'}</button>
-              <button className={`btn ${st.danger ? 'btn-danger' : 'btn-primary'}`} autoFocus onClick={() => close(true)}>{st.ok || 'Ya, lanjutkan'}</button>
+              <button className={`btn ${st.danger ? 'btn-danger' : 'btn-primary'}`} autoFocus onClick={() => close(true)}>{st.ok || 'Ya, Lanjutkan'}</button>
             </div>
           </div>
         </div>

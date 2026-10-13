@@ -38,17 +38,17 @@ export default function Akun() {
     catch (ex) { toast(errMsg(ex), 'danger'); } finally { setUp(false); }
   };
   const removePhoto = async () => {
-    if (!(await confirm({ title: 'Hapus foto profil?', body: 'Foto akan diganti dengan inisial nama Anda.', ok: 'Hapus foto', danger: true, icon: 'trash' }))) return;
+    if (!(await confirm({ title: 'Hapus Foto Profil?', body: 'Foto akan diganti dengan inisial nama Anda.', ok: 'Hapus Foto', danger: true, icon: 'trash' }))) return;
     try { setSessionUser((await api.delete('/auth/avatar')).data.user); toast('Foto profil dihapus.'); }
     catch (ex) { toast(errMsg(ex), 'danger'); }
   };
 
   return (
     <div style={{ maxWidth: 860 }}>
-      <PageHead eyebrow="Akun" title="Pengaturan akun" sub="Kelola foto profil dan data kontak Anda." />
+      <PageHead eyebrow="Akun" title="Pengaturan Akun" sub={isUser ? "Ubah foto profil Anda. Data akun dan perusahaan dikelola oleh Admin PSU." : "Ubah foto profil dan data diri Anda."} />
       <div className="d-flex flex-column gap-3">
         <section className="panel">
-          <div className="panel-h"><h2 className="mb-0">Foto profil</h2></div>
+          <div className="panel-h"><h2 className="mb-0">Foto Profil</h2></div>
           <div className="panel-b d-flex align-items-center gap-3 flex-wrap">
             <div className={`avatar-edit ${up ? 'busy' : ''}`}>
               <Avatar user={user} size={76} />
@@ -56,7 +56,7 @@ export default function Akun() {
             </div>
             <div className="d-flex flex-column gap-2">
               <div className="d-flex gap-2 flex-wrap">
-                <button type="button" className="btn btn-primary" onClick={() => fileRef.current?.click()} disabled={up}><i className="bi bi-upload" />{user.avatar_url ? 'Ganti foto' : 'Unggah foto'}</button>
+                <button type="button" className="btn btn-primary" onClick={() => fileRef.current?.click()} disabled={up}><i className="bi bi-upload" />{user.avatar_url ? 'Ganti Foto' : 'Unggah Foto'}</button>
                 {user.avatar_url && <button type="button" className="btn btn-outline-secondary" onClick={removePhoto} disabled={up}><i className="bi bi-trash" />Hapus</button>}
               </div>
               <span className="small text-muted2">JPG atau PNG, maksimal 2 MB. Disarankan foto persegi.</span>
@@ -66,30 +66,31 @@ export default function Akun() {
         </section>
 
         <form className="panel" onSubmit={save}>
-          <div className="panel-h"><h2 className="mb-0">Data diri</h2></div>
+          <div className="panel-h"><h2 className="mb-0">{isUser ? 'Data Akun' : 'Data Diri'}</h2>{isUser && <span className="small text-muted2">Hanya dapat diubah oleh Admin PSU</span>}</div>
           <div className="panel-b">
             <div className="row g-3">
-              <div className="col-md-6"><label className="form-label" htmlFor="ak-nm">Nama lengkap</label><input id="ak-nm" className="form-control" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required minLength={2} maxLength={120} /></div>
-              <div className="col-md-6"><label className="form-label" htmlFor="ak-ph">Nomor telepon / WhatsApp</label><input id="ak-ph" className="form-control" inputMode="tel" placeholder="08xxxxxxxxxx" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} maxLength={30} /></div>
+              <div className="col-md-6"><label className="form-label" htmlFor="ak-nm">Nama Lengkap</label><input id="ak-nm" className="form-control" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required minLength={2} maxLength={120} disabled={isUser} /></div>
+              <div className="col-md-6"><label className="form-label" htmlFor="ak-ph">Nomor Telepon / WhatsApp</label><input id="ak-ph" className="form-control" inputMode="tel" placeholder="08xxxxxxxxxx" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} maxLength={30} disabled={isUser} /></div>
               <div className="col-md-6"><label className="form-label" htmlFor="ak-em">Email</label><input id="ak-em" className="form-control" value={user.email} disabled /><div className="form-text">Email dipakai untuk masuk. Hubungi Admin PSU untuk mengubahnya.</div></div>
               {isUser ? (
                 <div className="col-md-6"><label className="form-label" htmlFor="ak-co">Perusahaan</label><input id="ak-co" className="form-control" value={user.company_name || ''} disabled /><div className="form-text">Data perusahaan dikelola oleh Admin PSU.</div></div>
               ) : (
                 <div className="col-md-6"><label className="form-label" htmlFor="ak-rl">Peran</label><input id="ak-rl" className="form-control" value={roleLabel(user)} disabled /></div>
               )}
-              <div className="col-12"><label className="form-label" htmlFor="ak-ad">Alamat {isUser ? 'korespondensi' : ''}</label><textarea id="ak-ad" className="form-control" rows={2} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} maxLength={255} /></div>
+              <div className="col-12"><label className="form-label" htmlFor="ak-ad">{isUser ? 'Alamat Perusahaan' : 'Alamat'}</label><textarea id="ak-ad" className="form-control" rows={2} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} maxLength={255} disabled={isUser} />
+                {isUser && <div className="form-text">Perlu mengubah data? Hubungi Admin PSU melalui WhatsApp atau email.</div>}</div>
             </div>
           </div>
-          <div className="panel-f">
+          {!isUser && <div className="panel-f">
             <button type="button" className="btn btn-outline-secondary" disabled={!dirty || busy} onClick={() => setF({ name: user.name || '', phone: user.phone || '', address: user.address || '' })}>Batal</button>
-            <button className="btn btn-primary" disabled={!dirty || busy}>{busy ? 'Menyimpan…' : 'Simpan perubahan'}</button>
-          </div>
+            <button className="btn btn-primary" disabled={!dirty || busy}>{busy ? 'Menyimpan…' : 'Simpan Perubahan'}</button>
+          </div>}
         </form>
 
         <section className="panel">
           <div className="panel-h"><h2 className="mb-0">Keamanan</h2></div>
           <div className="panel-b d-flex flex-column gap-0 p-0">
-            <Link to={`${base}/sandi`} className="set-row"><i className="bi bi-key" /><span><b>Ganti kata sandi</b><small>Gunakan minimal 8 karakter yang sulit ditebak.</small></span><i className="bi bi-chevron-right ms-auto" /></Link>
+            <Link to={`${base}/sandi`} className="set-row"><i className="bi bi-key" /><span><b>Ganti Kata Sandi</b><small>Gunakan minimal 8 karakter yang sulit ditebak.</small></span><i className="bi bi-chevron-right ms-auto" /></Link>
             <button type="button" className="set-row danger" onClick={signOut}><i className="bi bi-box-arrow-right" /><span><b>Keluar</b><small>Akhiri sesi di perangkat ini.</small></span><i className="bi bi-chevron-right ms-auto" /></button>
           </div>
         </section>

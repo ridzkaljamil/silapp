@@ -24,10 +24,9 @@ const AdminDetail = lazy(() => import('./pages/admin/AdminDetail'));
 const AkunPelanggan = lazy(() => import('./pages/admin/AkunPelanggan'));
 const DataSertifikat = lazy(() => import('./pages/admin/DataSertifikat'));
 const Pengguna = lazy(() => import('./pages/admin/Pengguna'));
-const Master = lazy(() => import('./pages/admin/Master'));
-const FormBuilder = lazy(() => import('./pages/admin/FormBuilder'));
-const HargaLab = lazy(() => import('./pages/admin/HargaLab'));
 const Survei = lazy(() => import('./pages/admin/Survei'));
+const KelolaLayanan = lazy(() => import('./pages/admin/layanan/KelolaLayanan'));
+const TemplateDokumen = lazy(() => import('./pages/common/TemplateDokumen'));
 
 /** Directory di area admin: tombol Kelola untuk Super Admin dan Admin bidang SP. */
 function AdminDirectory() {
@@ -44,7 +43,7 @@ export default function App() {
       <Route element={<PublicLayout />}>
         <Route index element={<Lacak />} />
         <Route path="layanan" element={<Layanan />} />
-        <Route path="directory" element={<Directory />} />
+        <Route path="directory" element={<Navigate to="/" replace />} />
       </Route>
       <Route element={<MinimalLayout />}>
         <Route path="ganti-sandi" element={<GantiSandi />} />
@@ -58,6 +57,7 @@ export default function App() {
         <Route path="akun" element={<Akun />} />
         <Route path="lacak" element={<Lacak inApp />} />
         <Route path="directory" element={<Directory inApp />} />
+        <Route path="template" element={<TemplateDokumen />} />
       </Route>
       <Route path="admin" element={<AppLayout roles={['admin', 'superadmin']} />}>
         <Route index element={<Dashboard />} />
@@ -68,12 +68,15 @@ export default function App() {
         <Route path="sandi" element={<GantiSandi />} />
         <Route path="akun" element={<Akun />} />
         <Route path="directory" element={<AdminDirectory />} />
+        <Route path="template" element={<TemplateDokumen />} />
       </Route>
       <Route path="admin" element={<AppLayout roles={['superadmin']} />}>
         <Route path="pengguna" element={<Pengguna />} />
-        <Route path="master" element={<Master />} />
-        <Route path="form" element={<FormBuilder />} />
-        <Route path="harga" element={<HargaLab />} />
+        <Route path="layanan" element={<KelolaLayanan />} />
+        <Route path="master" element={<Navigate to="/admin/layanan?tab=tahapan" replace />} />
+        <Route path="form" element={<Navigate to="/admin/layanan?tab=form" replace />} />
+        <Route path="harga" element={<Navigate to="/admin/layanan?tab=ruang-lingkup" replace />} />
+        <Route path="ruang-lingkup" element={<Navigate to="/admin/layanan?tab=ruang-lingkup" replace />} />
         <Route path="survei" element={<Survei />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

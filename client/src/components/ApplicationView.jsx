@@ -4,24 +4,24 @@
  */
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { StatusPill, SegProgress, StepsList, LogList, fmtDate, rupiah } from './ui';
+import { StatusPill, StepTrack, StepLegend, StepsList, LogList, fmtDate, rupiah } from './ui';
+import { Sheet } from './overlays';
 import { docWord } from '../lib/constants';
 
-const PST = { antri: ['pill-progress', 'Antrian'], uji: ['pill-action', 'Dalam pengujian'], selesai: ['pill-done', 'Selesai'] };
+const PST = { antri: ['pill-progress', 'Antrian'], uji: ['pill-action', 'Dalam Pengujian'], selesai: ['pill-done', 'Selesai'] };
 const CAT = { mayor: 'Mayor', minor: 'Minor', observasi: 'Observasi' };
-const FST = { terbuka: ['pill-action', 'Menunggu perbaikan'], dikirim: ['pill-progress', 'Bukti dikirim, ditinjau PSU'], ditutup: ['pill-done', 'Ditutup'] };
 const EXT = { diajukan: 'Perpanjangan diajukan', disetujui: 'Perpanjangan disetujui', ditolak: 'Perpanjangan ditolak' };
 
 /** Status per parameter, ditampilkan di dalam tahap "Proses pengujian laboratorium". */
-export function ParamInline({ app, onChange }) {
+function ParamInline({ app, onChange }) {
   if (!app.parameters?.length) return null;
   const done = app.parameters.filter((p) => p.status === 'selesai').length;
-  const lab05 = app.steps.find((s) => s.code === 'LAB-05');
+  const lab04 = app.steps.find((s) => s.code === 'LAB-04');
   return (
     <div className="params-inline">
       <div className="d-flex justify-content-between align-items-center flex-wrap gap-2 mb-2">
-        <b className="small" style={{ color: 'var(--navy)' }}>LAB-05 · {lab05?.name} — status per parameter</b>
-        <span className="badge text-bg-light border">{done}/{app.parameters.length} selesai{app.full_sni ? ' · parameter lengkap SNI' : ''}</span>
+        <b className="small" style={{ color: 'var(--navy)' }}>LAB-04 · {lab04?.name} — status per parameter</b>
+        <span className="badge text-bg-light border">{done}/{app.parameters.length} selesai{app.full_sni ? ' · parameter lengkap SNI' : ''}{app.price_option ? ` · ${app.price_option}` : ''}</span>
       </div>
       <div className="table-responsive">
         <table className="table table-sm mb-0 align-middle small">
@@ -30,7 +30,7 @@ export function ParamInline({ app, onChange }) {
               <tr key={p.id}>
                 <td>{p.name}{p.is_custom ? <span className="badge text-bg-light border ms-1 fw-normal">lainnya</span> : null}{p.method && <div className="text-muted2" style={{ fontSize: 11 }}>{p.method}</div>}</td>
                 <td className="text-end text-sm-start"><span className={`pill ${PST[p.status][0]}`}>{PST[p.status][1]}</span></td>
-                {onChange && <td className="text-end">{p.status !== 'selesai' && <button className="btn btn-outline-secondary btn-sm" onClick={() => onChange(p.id, p.status === 'antri' ? 'uji' : 'selesai')}>{p.status === 'antri' ? 'Mulai uji' : 'Tandai selesai'}</button>}</td>}
+                {onChange && <td className="text-end">{p.status !== 'selesai' && <button className="btn btn-outline-secondary btn-sm" onClick={() => onChange(p.id, p.status === 'antri' ? 'uji' : 'selesai')}>{p.status === 'antri' ? 'Mulai Uji' : 'Tandai Selesai'}</button>}</td>}
               </tr>
             ))}
           </tbody>
@@ -42,7 +42,7 @@ export function ParamInline({ app, onChange }) {
 }
 
 /** Temuan audit (SP): tabel di desktop, kartu di HP. */
-export function FindingsPanel({ app, renderActions, extra, onDownloadDoc }) {
+function FindingsPanel({ app, renderActions, extra, onDownloadDoc }) {
   if (!app.findings?.length && !extra) return null;
   const sub = (f) => (
     <>
@@ -59,7 +59,7 @@ export function FindingsPanel({ app, renderActions, extra, onDownloadDoc }) {
   return (
     <section className="panel">
       <div className="panel-h">
-        <h2 className="mb-0">Temuan audit</h2>
+        <h2 className="mb-0">Temuan Audit</h2>
         {app.audit_report_date && <span className="small text-muted2">Laporan {fmtDate(app.audit_report_date)}</span>}
       </div>
       {app.findings.length > 0 && (
@@ -100,8 +100,10 @@ export function FindingsPanel({ app, renderActions, extra, onDownloadDoc }) {
   );
 }
 
-/** Rincian invoice (harga sudah termasuk PPN 11%). */
-export function InvoiceView({ p, onDownloadInvoice }) {
+/**
+ * Rincian invoice sesuai format PSU: harga pekerjaan, DPP nilai lain, PPN 12%, total, PPh 23 (jika dipotong), grand total.
+ */
+function InvoiceView({ p, onDownloadInvoice, onDownloadProof }) {
   if (!p) return null;
   return (
     <div className="small">
@@ -109,16 +111,22 @@ export function InvoiceView({ p, onDownloadInvoice }) {
       <table className="table table-sm inv mb-1">
         <tbody>
           {p.items.map((it, i) => (
-            <tr key={i}><td>{it.label}{it.qty > 1 && <span className="text-muted2"> · {rupiah(it.price)} × {it.qty}</span>}</td><td className="text-end num text-nowrap">{rupiah(it.amount)}</td></tr>
+            <tr key={i}><td style={{ whiteSpace: 'pre-line' }}>{it.label}{it.qty > 1 && <span className="d-block text-muted2">({it.qty} {it.unit || 'sampel'} × {rupiah(it.price)})</span>}</td><td className="text-end num text-nowrap">{rupiah(it.amount)}</td></tr>
           ))}
-          <tr><td className="text-muted2">DPP</td><td className="text-end num">{rupiah(p.dpp)}</td></tr>
-          <tr><td className="text-muted2">PPN 11%</td><td className="text-end num">{rupiah(p.ppn)}</td></tr>
-          <tr><th>Total (termasuk PPN)</th><th className="text-end num">{rupiah(p.amount)}</th></tr>
+          {p.items.length > 1 && <tr><td className="text-muted2">Jumlah Harga</td><td className="text-end num">{rupiah(p.price)}</td></tr>}
+          <tr><td className="text-muted2">DPP Nilai Lain (11/12 × harga)</td><td className="text-end num">{rupiah(p.dpp_lain)}</td></tr>
+          <tr><td className="text-muted2">PPN 12%</td><td className="text-end num">{rupiah(p.ppn)}</td></tr>
+          <tr><td className="text-muted2">Total</td><td className="text-end num">{rupiah(p.total)}</td></tr>
+          {p.pph23 > 0 && <tr><td className="text-muted2">PPh 23 (2% × harga, dipotong)</td><td className="text-end num">−{rupiah(p.pph23)}</td></tr>}
+          <tr><th>Grand Total (Dibayar)</th><th className="text-end num">{rupiah(p.amount)}</th></tr>
         </tbody>
       </table>
-      {p.due_date && <div>Batas pembayaran: <b>{fmtDate(p.due_date)}</b></div>}
+      {p.due_date && <div>Jatuh tempo: <b>{fmtDate(p.due_date)}</b></div>}
       {p.note && <div className="text-muted2">{p.note}</div>}
-      {p.has_invoice_file && <button type="button" className="btn btn-link btn-sm p-0" onClick={onDownloadInvoice}><i className="bi bi-file-earmark-pdf me-1" />Unduh file invoice</button>}
+      <div className="d-flex flex-wrap gap-3 mt-2">
+        {onDownloadInvoice && <button type="button" className="btn btn-link btn-sm p-0" onClick={onDownloadInvoice}><i className="bi bi-file-earmark-pdf me-1" />Unduh Invoice (PDF)</button>}
+        {p.has_proof && onDownloadProof && <button type="button" className="btn btn-link btn-sm p-0" onClick={onDownloadProof}><i className="bi bi-receipt me-1" />Lihat Bukti Bayar</button>}
+      </div>
     </div>
   );
 }
@@ -145,15 +153,46 @@ function DocList({ list, admin, onDownloadDoc }) {
 }
 
 const FragmentRow = ({ k, v }) => (<><dt>{k}</dt><dd>{v}</dd></>);
+/** Kode lacak + tombol salin (untuk dibagikan ke rekan kerja, dibuka tanpa login). */
+function CopyCode({ code }) {
+  const [ok, setOk] = useState(false);
+  const copy = () => navigator.clipboard?.writeText(code).then(() => { setOk(true); setTimeout(() => setOk(false), 1500); });
+  return (
+    <span className="d-inline-flex align-items-center gap-1 flex-wrap">
+      <span className="mono">{code}</span>
+      <button type="button" className="btn btn-link btn-sm p-0" style={{ minHeight: 0 }} onClick={copy} aria-label="Salin Kode Lacak" title="Salin Kode Lacak"><i className={`bi bi-${ok ? 'check2' : 'clipboard'}`} />{ok ? 'Disalin' : 'Salin'}</button>
+    </span>
+  );
+}
+
 const detailOf = (app, key) => app.details.find((d) => d.key === key)?.value;
 
+/** Riwayat satu tahap: catatan, berkas pada tahap itu, dan (tahap pembayaran) invoice + bukti bayar. */
+function StepHistory({ app, step, onClose, onDownloadDoc, onDownloadInvoice, onDownloadProof }) {
+  const logs = step ? app.logs.filter((l) => l.status_code === step.code) : [];
+  const docs = step ? app.documents.filter((d) => d.step_order === step.order && !logs.some((l) => l.files?.some((f) => f.id === d.id))) : [];
+  return (
+    <Sheet open={!!step} onClose={onClose} wide icon="clock-history" title={step ? `${step.code} · ${step.name}` : ''}
+      sub={step && (step.state === 'done' ? `Selesai${step.started_at ? ` · dimulai ${fmtDate(step.started_at)}` : ''}` : step.state === 'skipped' ? 'Dilewati' : 'Tahap saat ini')}>
+      {step && (
+        <div className="d-flex flex-column gap-3">
+          {step.pay && app.payment && <section className="border rounded-3 p-3"><div className="eyebrow mb-2">Invoice & Pembayaran</div><InvoiceView p={app.payment} onDownloadInvoice={onDownloadInvoice} onDownloadProof={onDownloadProof} /></section>}
+          <div><div className="eyebrow mb-2">Riwayat Tahap</div><LogList logs={logs} onDownloadDoc={onDownloadDoc} /></div>
+          {docs.length > 0 && <div><div className="eyebrow mb-2">Berkas di Tahap Ini</div><DocList list={docs} onDownloadDoc={onDownloadDoc} /></div>}
+        </div>
+      )}
+    </Sheet>
+  );
+}
+
 /** Info pengujian laboratorium (SP), versi baca-saja. */
-export function LabInfoCard({ app, onDownloadDoc }) {
+function LabInfoCard({ app, onDownloadDoc, empty }) {
   const lhu = app.documents.filter((d) => d.doc_type === 'Laporan Hasil Uji (LHU)');
-  if (app.service_code !== 'SP' || (!app.lab_info && !lhu.length)) return null;
+  if (app.service_code !== 'SP') return null;
+  if (!app.lab_info && !lhu.length) return empty ? <section className="panel panel-b"><h2 className="mb-1">Pengujian Laboratorium</h2><p className="small text-muted2 mb-0">PSU sedang menyiapkan pengujian laboratorium. Nama lab, estimasi, dan hasil (LHU) akan tampil di sini.</p></section> : null;
   return (
     <section className="panel panel-b d-flex flex-column gap-1">
-      <h2 className="mb-1">Pengujian laboratorium</h2>
+      <h2 className="mb-1">Pengujian Laboratorium</h2>
       <div className="small">{app.lab_info?.name || 'Laboratorium'}{app.lab_info?.estimate && <> · estimasi {app.lab_info.estimate}</>}</div>
       {app.lab_info?.link ? <a className="small fw-semibold" href={app.lab_info.link} target="_blank" rel="noreferrer">Buka hasil lab (LHU) <i className="bi bi-box-arrow-up-right" /></a>
         : !lhu.length && <span className="small text-muted2">LHU akan muncul di sini setelah terbit.</span>}
@@ -169,12 +208,13 @@ export function LabInfoCard({ app, onDownloadDoc }) {
  * - kiri: tab Ringkasan/Temuan/Dokumen/Invoice/Riwayat · kanan: kartu keputusan, pemohon & invoice ringkas
  * Props: headerActions, mobileBar, decision {title, body}, main (panel tambahan di Ringkasan), children (panel paling bawah Ringkasan)
  */
-export default function ApplicationView({ app, backTo, admin, headerActions, mobileBar, decision, main, onParam, onDownloadDoc, onDownloadInvoice, findingActions, findingsExtra, children, tab: tabProp, onTab }) {
+export default function ApplicationView({ app, backTo, admin, headerActions, mobileBar, decision, main, labPanel, onParam, onDownloadDoc, onDownloadInvoice, onDownloadProof, findingActions, findingsExtra, children, tab: tabProp, onTab }) {
   const [tabState, setTabState] = useState('ringkasan');
   const tab = tabProp ?? tabState;
   const setTab = (t) => { (onTab || setTabState)(t); };
   const [allSteps, setAllSteps] = useState(false);
   const [moreDetail, setMoreDetail] = useState(false);
+  const [histStep, setHistStep] = useState(null);
   const fromPsu = app.documents.filter((d) => d.source === 'admin');
   const fromCustomer = app.documents.filter((d) => d.source !== 'admin');
   const openF = app.findings.filter((f) => f.status !== 'ditutup' && f.category !== 'observasi');
@@ -183,15 +223,19 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
   const showFindings = app.findings.length > 0 || !!findingsExtra;
   const title = app.product_label.split(' · ').slice(0, 2).join(' · ');
   const docName = docWord(app.service_code, true);
+  // SP: tab Pengujian Laboratorium muncul sejak tahap ST-06 berjalan atau info lab sudah ada
+  const st06 = app.steps.find((x) => x.code === 'ST-06');
+  const showLab = app.service_code === 'SP' && (!!app.lab_info || app.documents.some((d) => d.doc_type === 'Laporan Hasil Uji (LHU)') || (st06 && st06.state !== 'todo'));
   const tabs = [
     ['ringkasan', 'Ringkasan'],
+    ...(showLab ? [['lab', 'Pengujian Lab']] : []),
     ...(showFindings ? [['temuan', 'Temuan', openF.length, openF.length > 0]] : []),
     ['dokumen', 'Dokumen', app.documents.length],
     ...(app.payment ? [['invoice', 'Invoice']] : []),
     ['riwayat', 'Riwayat'],
   ];
   const pabrik = detailOf(app, 'kota_provinsi') || detailOf(app, 'alamat_pabrik');
-  const merek = detailOf(app, 'merek');
+  const merek = detailOf(app, 'merek_jenis') || detailOf(app, 'merek');
   const bar = mobileBar ?? headerActions;
 
   return (
@@ -211,22 +255,28 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
 
       {decision && !decision.quiet && <div className="decision-m">{decision.body}</div>}
       {app.status === 'ditolak' && <div className="alert alert-danger mb-3"><b>Pengajuan ditutup.</b> {app.reject_note}</div>}
+      {app.status === 'batal' && <div className="alert alert-secondary mb-3"><b>Pengajuan dibatalkan pelanggan.</b> {app.reject_note}</div>}
       {app.status === 'selesai' && app.certificate && <div className="alert alert-success mb-3"><b>{docName} {app.certificate.certificate_no}</b> terbit {fmtDate(app.certificate.issued_at)}.{!app.survey_done && (admin ? ' Pelanggan belum mengisi survei kepuasan.' : ' Isi survei kepuasan untuk mengunduh dokumen.')}</div>}
 
-      <section className="panel panel-b mb-4 d-flex flex-column gap-3" aria-label="Progres">
-        <div className="d-flex justify-content-between flex-wrap gap-2 small">
-          <span><b style={{ color: 'var(--navy)' }}>{app.status === 'selesai' ? 'Semua tahap selesai' : `Tahap ${curIdx + 1} dari ${app.steps.length}`}</b>{app.status !== 'selesai' && <> · {app.current_step.name}</>}{next && app.status !== 'selesai' && <span className="text-muted2 hide-sm"> · berikutnya {next.name}</span>}</span>
-          <span className="text-muted2">{app.progress}%{app.steps[curIdx]?.started_at && ` · dimulai ${fmtDate(app.steps[curIdx].started_at)}`}</span>
+      <section className="panel panel-b mb-4 d-flex flex-column gap-3 prog-panel" aria-label="Progres">
+        <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
+          <span><b>{app.status === 'selesai' ? 'Semua Tahap Selesai' : `Tahap ${curIdx + 1} dari ${app.steps.length}`}</b>{app.status !== 'selesai' && <> · {app.current_step.name}</>}{next && app.status !== 'selesai' && <span className="text-muted2 hide-sm"> · berikutnya {next.name}</span>}</span>
+          <span className="d-flex align-items-center gap-3">{app.steps[curIdx]?.started_at && <span className="small text-muted2">dimulai {fmtDate(app.steps[curIdx].started_at)}</span>}<b className="prog-pct num">{app.progress}%</b></span>
         </div>
-        <SegProgress steps={app.steps} />
-        <button type="button" className="btn btn-link p-0 align-self-start small fw-semibold" style={{ minHeight: 0 }} onClick={() => setAllSteps(!allSteps)} aria-expanded={allSteps}>{allSteps ? 'Sembunyikan tahap' : 'Lihat semua tahap'}</button>
-        {allSteps && <div className="reveal"><StepsList steps={app.steps} /></div>}
+        <StepTrack steps={app.steps} onSelect={setHistStep} />
+        <div className="prog-foot">
+          <StepLegend />
+          <span className="small text-muted2 hide-sm">Klik tahap untuk melihat riwayatnya</span>
+          <button type="button" className="tr-all" onClick={() => setAllSteps(true)}>Lihat Semua Tahap<i className="bi bi-arrow-right" aria-hidden="true" /></button>
+        </div>
+        <Sheet open={allSteps} onClose={() => setAllSteps(false)} icon="signpost-split" title="Tahapan Pengajuan" sub={`${app.service_name} · ${app.steps.length} tahap`}><StepsList steps={app.steps} /></Sheet>
+        <StepHistory app={app} step={histStep} onClose={() => setHistStep(null)} onDownloadDoc={onDownloadDoc} onDownloadInvoice={onDownloadInvoice} onDownloadProof={onDownloadProof} />
         <ParamInline app={app} onChange={onParam} />
       </section>
 
       <div className="detail-grid">
         <div className="da-main">
-          <div className="tabs" role="tablist" style={{ '--tabs': tabs.length }}>
+          <div className={`tabs ${tabs.length > 4 ? 'page-tabs' : ''}`} role="tablist" style={{ '--tabs': tabs.length }}>
             {tabs.map(([k, l, n, warn]) => (
               <button key={k} role="tab" aria-selected={tab === k} onClick={() => setTab(k)}>{l}{n ? <span className={`cnt ${warn ? 'warn' : ''}`}>{n}</span> : null}</button>
             ))}
@@ -236,14 +286,14 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
             <>
               {showFindings && (openF.length > 0 || findingsExtra || app.findings.some((f) => f.status !== 'ditutup')) && <FindingsPanel app={app} renderActions={findingActions} extra={findingsExtra} onDownloadDoc={onDownloadDoc} />}
               {main}
-              {!admin && <LabInfoCard app={app} onDownloadDoc={onDownloadDoc} />}
               <section className="panel">
-                <div className="panel-h"><h2 className="mb-0">Aktivitas terbaru</h2><button className="btn btn-link btn-sm p-0 fw-semibold" style={{ minHeight: 0 }} onClick={() => setTab('riwayat')}>Lihat semua</button></div>
+                <div className="panel-h"><h2 className="mb-0">Aktivitas Terbaru</h2><button className="btn btn-link btn-sm p-0 fw-semibold" style={{ minHeight: 0 }} onClick={() => setTab('riwayat')}>Lihat Semua</button></div>
                 <div className="panel-b py-1"><LogList logs={app.logs} onDownloadDoc={onDownloadDoc} limit={3} /></div>
               </section>
               {children}
             </>
           )}
+          {tab === 'lab' && (labPanel || <LabInfoCard app={app} onDownloadDoc={onDownloadDoc} empty />)}
           {tab === 'temuan' && <FindingsPanel app={app} renderActions={findingActions} extra={findingsExtra} onDownloadDoc={onDownloadDoc} />}
           {tab === 'dokumen' && (
             <section className="panel panel-b d-flex flex-column gap-3">
@@ -255,12 +305,12 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
           {tab === 'invoice' && app.payment && (
             <section className="panel">
               <div className="panel-h"><h2 className="mb-0">Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
-              <div className="panel-b"><InvoiceView p={app.payment} onDownloadInvoice={onDownloadInvoice} /></div>
+              <div className="panel-b"><InvoiceView p={app.payment} onDownloadInvoice={onDownloadInvoice} onDownloadProof={onDownloadProof} /></div>
             </section>
           )}
           {tab === 'riwayat' && (
             <section className="panel">
-              <div className="panel-h"><h2 className="mb-0">Riwayat status</h2><span className="small text-muted2">{admin ? 'audit trail lengkap' : 'yang dapat dilihat pelanggan'}</span></div>
+              <div className="panel-h"><h2 className="mb-0">Riwayat Status</h2><span className="small text-muted2">{admin ? 'audit trail lengkap' : 'yang dapat dilihat pelanggan'}</span></div>
               <div className="panel-b py-1"><LogList logs={app.logs} onDownloadDoc={onDownloadDoc} /></div>
             </section>
           )}
@@ -279,27 +329,36 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
               <dl className="dl-grid">
                 {admin && <FragmentRow k="Perusahaan" v={<b>{app.company_name}</b>} />}
                 {pabrik && <FragmentRow k="Pabrik" v={pabrik} />}
-                {merek && <FragmentRow k="Merek" v={merek} />}
+                {merek && <FragmentRow k="Merek & Jenis" v={<span style={{ whiteSpace: 'pre-line' }}>{merek}</span>} />}
                 {admin && <FragmentRow k="Kontak" v={<>{app.user_name}<br /><a href={`mailto:${app.user_email}`}>{app.user_email}</a></>} />}
-                <FragmentRow k="Kode lacak" v={<span className="mono">{app.tracking_code}</span>} />
+                <FragmentRow k="Kode Lacak" v={<CopyCode code={app.tracking_code} />} />
+                {app.price_option && <FragmentRow k="Opsi Harga" v={app.price_option} />}
               </dl>
-              {moreDetail && <dl className="dl-grid swap mt-2">
-                {app.application_type && <FragmentRow k="Jenis" v={app.application_type} />}
-                {app.scheme && <FragmentRow k="Skema" v={app.scheme} />}
-                {app.location && <FragmentRow k="Lokasi" v={app.location === 'onsite' ? 'On-site' : 'Di laboratorium'} />}
-                {app.details.filter((d) => !['kota_provinsi', 'merek'].includes(d.key)).map((d) => <FragmentRow key={d.label} k={d.label} v={d.value} />)}
-                {app.equipment.map((e) => <FragmentRow key={e.id} k="Alat" v={`${e.name} ${e.brand_model || ''} · S/N ${e.serial_number || '-'} · ${e.range_capacity || ''}`} />)}
-                {app.samples.map((x) => <FragmentRow key={x.id} k="Sampel" v={`${x.description} · ${x.quantity} sampel`} />)}
-              </dl>}
-              <button type="button" className="btn btn-link btn-sm p-0 mt-2 fw-semibold" style={{ minHeight: 0 }} onClick={() => setMoreDetail(!moreDetail)} aria-expanded={moreDetail}>{moreDetail ? 'Ringkas' : 'Lihat detail lengkap'}</button>
+              <button type="button" className="btn btn-link btn-sm p-0 mt-2 fw-semibold" style={{ minHeight: 0 }} onClick={() => setMoreDetail(true)}>Lihat Detail Lengkap</button>
+              <Sheet open={moreDetail} onClose={() => setMoreDetail(false)} wide icon="file-text" title="Detail Pengajuan" sub={`${app.application_no} · ${app.service_name}`}>
+                <dl className="dl-grid mb-0">
+                  {admin && <FragmentRow k="Perusahaan" v={app.company_name} />}
+                  <FragmentRow k="Produk / Layanan" v={app.product_label} />
+                  <FragmentRow k="Kode Lacak" v={<CopyCode code={app.tracking_code} />} />
+                  <FragmentRow k="Diajukan" v={fmtDate(app.created_at)} />
+                  {app.price_option && <FragmentRow k="Opsi Harga" v={app.price_option} />}
+                  {app.application_type && <FragmentRow k="Jenis" v={app.application_type} />}
+                  {app.scheme && <FragmentRow k="Skema" v={app.scheme} />}
+                  {app.origin && <FragmentRow k="Asal Produk" v={app.origin} />}
+                  {app.location && <FragmentRow k="Lokasi" v={app.location === 'onsite' ? 'On-site' : 'Di laboratorium'} />}
+                  {app.details.filter((d) => !['kota_provinsi', 'merek'].includes(d.key)).map((d) => <FragmentRow key={d.label} k={d.label} v={<span style={{ whiteSpace: 'pre-line' }}>{d.value}</span>} />)}
+                  {app.equipment.map((e) => <FragmentRow key={e.id} k="Alat" v={`${e.name} ${e.brand_model || ''} · S/N ${e.serial_number || '-'} · ${e.range_capacity || ''}`} />)}
+                  {app.samples.map((x) => <FragmentRow key={x.id} k="Sampel" v={`${x.description} · ${x.quantity} sampel`} />)}
+                </dl>
+              </Sheet>
             </div>
           </section>
           {app.payment ? (
             <section className="panel panel-b inv-mini">
               <div className="d-flex justify-content-between align-items-center gap-2"><h2 className="mb-0">Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
               <div className="amt num">{rupiah(app.payment.amount)}</div>
-              <div className="small text-muted2"><span className="mono">{app.payment.invoice_no}</span> · termasuk PPN 11%{app.payment.due_date && app.payment_status !== 'terverifikasi' && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}</div>
-              <button type="button" className="btn btn-link btn-sm p-0 mt-1 fw-semibold align-self-start" style={{ minHeight: 0 }} onClick={() => setTab('invoice')}>Lihat rincian</button>
+              <div className="small text-muted2"><span className="mono">{app.payment.invoice_no}</span> · termasuk PPN{app.payment.pph23 > 0 ? ', dipotong PPh 23' : ''}{app.payment.due_date && app.payment_status !== 'terverifikasi' && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}</div>
+              <button type="button" className="btn btn-link btn-sm p-0 mt-1 fw-semibold align-self-start" style={{ minHeight: 0 }} onClick={() => setTab('invoice')}>Lihat Rincian</button>
             </section>
           ) : app.current_step.is_payment_step && (
             <section className="panel panel-b inv-mini"><h2 className="mb-1">Invoice</h2><span className="small text-muted2">Belum terbit.</span></section>

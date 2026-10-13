@@ -1,9 +1,26 @@
 /** Input kustom: dropdown (Select) dan area unggah file (FileDrop). */
-import { useState, useRef, useEffect } from 'react';
-import { FILE_ACCEPT } from '../lib/format';
+import { useState, useRef, useEffect, useCallback } from 'react';
+import { useDismiss } from '../hooks/useDismiss';
+import { FILE_ACCEPT, MAX_FILE_MB } from '../lib/format';
+import { useToast } from './feedback';
+
+/**
+ * Buang file yang melebihi batas ukuran sebelum dikirim (server juga menolak di atas 10 MB),
+ * supaya pengguna langsung tahu tanpa menunggu unggahan gagal.
+ */
+export function useFileGuard() {
+  const toast = useToast();
+  return useCallback((list) => {
+    const all = [...(list || [])];
+    const big = all.filter((f) => f.size > MAX_FILE_MB * 1024 * 1024);
+    if (big.length) toast(`${big.map((f) => f.name).join(', ')} melebihi ${MAX_FILE_MB} MB, jadi tidak dipilih.`, 'danger');
+    return all.filter((f) => !big.includes(f));
+  }, [toast]);
+}
 
 /** Area unggah file bergaya dropzone (tetap memakai input file biasa). */
-export function FileDrop({ id, multiple, accept = FILE_ACCEPT, files, onChange, label = 'Pilih file', hint = 'PDF, ZIP, JPG atau PNG · maks. 10 MB' }) {
+export function FileDrop({ id, multiple, accept = FILE_ACCEPT, files, onChange, label = 'Pilih file', hint = 'PDF, Word, ZIP, JPG atau PNG · maks. 10 MB' }) {
+  const guard = useFileGuard();
   const n = files?.length || 0;
   return (
     <label className={`file-drop ${n ? 'has' : ''}`} htmlFor={id}>
@@ -12,7 +29,7 @@ export function FileDrop({ id, multiple, accept = FILE_ACCEPT, files, onChange, 
         <b>{n ? (n === 1 ? files[0].name : `${n} file dipilih`) : label}</b>
         <small>{n ? 'Klik untuk mengganti' : hint}</small>
       </span>
-      <input id={id} type="file" multiple={multiple} accept={accept} className="visually-hidden" onChange={(e) => onChange(e.target.files)} />
+      <input id={id} type="file" multiple={multiple} accept={accept} className="visually-hidden" onChange={(e) => { onChange(guard(e.target.files)); e.target.value = ''; }} />
     </label>
   );
 }
@@ -44,12 +61,8 @@ export function Select({ value, onChange, children, className = '', style, id, r
   const val = value === undefined || value === null ? '' : String(value);
   const cur = opts.find((o) => o.value === val) || null;
   const sm = className.includes('form-select-sm');
-  useEffect(() => {
-    if (!open) return undefined;
-    const onDoc = (e) => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
-    document.addEventListener('mousedown', onDoc);
-    return () => document.removeEventListener('mousedown', onDoc);
-  }, [open]);
+  const close = useCallback(() => setOpen(false), []);
+  useDismiss(ref, open, close, { esc: false });
   useEffect(() => { if (open && listRef.current && hi >= 0) listRef.current.children[hi]?.scrollIntoView({ block: 'nearest' }); }, [open, hi]);
   const pick = (o) => {
     if (!o || o.disabled) return;

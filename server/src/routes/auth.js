@@ -35,13 +35,34 @@ const avatarUpload = multer({
 });
 const removeFile = (name) => { if (name) fs.rm(path.join(UPLOAD_DIR, path.basename(name)), { force: true }, () => {}); };
 
+/* Batasi percobaan masuk: 8 kali gagal per email + IP dalam 15 menit, lalu dikunci sementara. */
+const FAILS = new Map();
+const WINDOW = 15 * 60 * 1000;
+const MAX_FAILS = 8;
+const failKey = (req, email) => `${req.ip}|${String(email || '').toLowerCase()}`;
+const lockedFor = (key) => {
+  const f = FAILS.get(key);
+  if (!f || Date.now() - f.first > WINDOW) { FAILS.delete(key); return 0; }
+  return f.count >= MAX_FAILS ? Math.ceil((f.first + WINDOW - Date.now()) / 60000) : 0;
+};
+const addFail = (key) => {
+  const f = FAILS.get(key);
+  if (!f || Date.now() - f.first > WINDOW) FAILS.set(key, { count: 1, first: Date.now() }); else f.count += 1;
+  if (FAILS.size > 5000) FAILS.clear(); // jaga memori
+};
+
 router.post('/login', async (req, res, next) => {
   try {
     const { email, password } = req.body;
+    const key = failKey(req, email);
+    const wait = lockedFor(key);
+    if (wait) return res.status(429).json({ message: `Terlalu banyak percobaan masuk. Coba lagi dalam ${wait} menit.` });
     const user = await one('SELECT * FROM users WHERE email=?', [email || '']);
     if (!user || !user.is_active || !(await bcrypt.compare(password || '', user.password_hash))) {
+      addFail(key);
       return res.status(401).json({ message: 'Email atau kata sandi salah.' });
     }
+    FAILS.delete(key);
     res.json({ token: sign(user), user: publicUser(user) });
   } catch (e) { next(e); }
 });
@@ -51,6 +72,8 @@ router.get('/me', requireAuth, (req, res) => res.json(publicUser(req.user)));
 /** Pengaturan akun: nama, telepon, alamat. Email & perusahaan dikelola Admin. */
 router.put('/profile', requireAuth, async (req, res, next) => {
   try {
+    // data akun pelanggan hanya boleh diubah Admin / Super Admin (menu Akun Pelanggan)
+    if (req.user.role === 'user') return res.status(403).json({ message: 'Data akun pelanggan hanya dapat diubah oleh Admin PSU.' });
     const name = String(req.body.name || '').trim();
     const phone = String(req.body.phone || '').trim();
     const address = String(req.body.address || '').trim();

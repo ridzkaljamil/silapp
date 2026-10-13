@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { getContact } = require('./settings');
 
 let transporter = null;
 if (process.env.SMTP_HOST) {
@@ -15,8 +16,13 @@ if (process.env.SMTP_HOST) {
  * supaya alur tetap bisa diuji tanpa server email.
  * attachments: [{ filename, path }] (opsional)
  */
-async function sendMail(to, subject, text, attachments = []) {
+async function sendMail(to, subject, body, attachments = []) {
   if (!to) return;
+  let text = body;
+  try {
+    const { phone, email } = await getContact();
+    text += `\n\n—\nKontak PSU: WhatsApp ${phone} · Email ${email}\nEmail ini dikirim otomatis oleh SILAPP. Untuk pertanyaan, hubungi kontak di atas.`;
+  } catch { /* kontak opsional */ }
   if (!transporter) {
     const att = attachments.length ? `\n[lampiran: ${attachments.map((a) => a.filename).join(', ')}]` : '';
     console.log(`[email-simulasi] ke=${to} | ${subject}\n${text}${att}\n`);

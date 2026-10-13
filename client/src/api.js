@@ -8,9 +8,20 @@ api.interceptors.request.use((config) => {
   return config;
 });
 
+const wait = (ms) => new Promise((r) => { setTimeout(r, ms); });
+const RETRY = [502, 503, 504];
+
 api.interceptors.response.use(
   (r) => r,
-  (err) => {
+  async (err) => {
+    // GET yang gagal karena server sedang restart / jaringan putus sesaat diulang otomatis (maks. 2 kali)
+    const cfg = err.config;
+    const transient = !err.response ? err.code !== 'ERR_CANCELED' : RETRY.includes(err.response.status);
+    if (cfg && cfg.method === 'get' && transient && (cfg.__retry || 0) < 2) {
+      cfg.__retry = (cfg.__retry || 0) + 1;
+      await wait(700 * cfg.__retry);
+      return api(cfg);
+    }
     if (err.response?.data?.code === 'MUST_CHANGE_PASSWORD' && !location.pathname.startsWith('/ganti-sandi')) {
       location.href = '/ganti-sandi';
     }

@@ -20,14 +20,14 @@ export default function Directory({ inApp = false, manageTo }) {
   return (
     <div className="d-flex flex-column gap-4">
       {inApp ? (
-        <PageHead eyebrow="Publik" title="Directory sertifikat" sub="Data ini juga tampil di halaman Directory publik (tanpa login).">
+        <PageHead eyebrow="Publik" title="Directory Sertifikat" sub="Daftar perusahaan pemegang SPPT SNI dari LSPro PSU. Status Aktif atau Tidak Aktif menunjukkan masa berlaku sertifikat.">
           <div className="d-flex gap-4 me-2">{stats}</div>
-          {manageTo && <Link to={manageTo} className="btn btn-outline-secondary"><i className="bi bi-pencil-square" />Kelola data</Link>}
+          {manageTo && <Link to={manageTo} className="btn btn-outline-secondary"><i className="bi bi-pencil-square" />Kelola Data</Link>}
         </PageHead>
       ) : (
         <div className="d-flex justify-content-between align-items-end flex-wrap gap-3">
           <div style={{ maxWidth: 640 }}>
-            <h1 className="mb-2" style={{ fontSize: 'clamp(1.7rem,4vw,2.1rem)', letterSpacing: '-.03em' }}>Directory perusahaan bersertifikat</h1>
+            <h1 className="mb-2" style={{ fontSize: 'clamp(1.7rem,4vw,2.1rem)', letterSpacing: '-.03em' }}>Directory Perusahaan Bersertifikat</h1>
             <p className="text-muted2 mb-0">Sertifikat Produk Penggunaan Tanda SNI (SPPT SNI) yang diterbitkan LSPro PT Penilai Standar Uji.</p>
           </div>
           <div className="d-flex gap-4">{stats}</div>
@@ -39,15 +39,15 @@ export default function Directory({ inApp = false, manageTo }) {
           <i className="bi bi-search text-muted2" aria-hidden="true" />
           <input className="border-0 flex-grow-1 bg-transparent" style={{ outline: 0, minHeight: 44 }} placeholder="Cari nama pabrik, produk, nomor SNI atau sertifikat" aria-label="Cari" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
-        <div className="segmented" role="group" aria-label="Filter status">
-          {[['', 'Semua'], ['aktif', 'Aktif'], ['tidak_aktif', 'Tidak aktif']].map(([v, l]) => <button key={v} aria-pressed={st === v} onClick={() => setSt(v)}>{l}</button>)}
+        <div className="segmented" role="group" aria-label="Filter Status">
+          {[['', 'Semua'], ['aktif', 'Aktif'], ['tidak_aktif', 'Tidak Aktif']].map(([v, l]) => <button key={v} aria-pressed={st === v} onClick={() => setSt(v)}>{l}</button>)}
         </div>
       </div>
 
       <section className="panel overflow-hidden">
         <div className="app-table table-responsive">
           <table className="table align-middle">
-            <thead><tr><th>Nama pabrik</th><th>Produk</th><th>Nomor SNI</th><th>Nomor sertifikat</th><th>Terbit</th><th>Status</th></tr></thead>
+            <thead><tr><th>Nama Pabrik</th><th>Produk</th><th>Nomor SNI</th><th>Nomor Sertifikat</th><th>Terbit</th><th>Status</th></tr></thead>
             <tbody>
               {f.map((r) => (
                 <tr key={r.certificate_no}><td><b>{r.factory_name}</b><div className="small text-muted2">{r.factory_address}</div></td><td>{r.product}</td><td className="mono">{r.sni_no}</td><td className="mono">{r.certificate_no}</td><td className="text-nowrap">{fmtDate(r.issued_at)}</td><td><Status v={r.status} /></td></tr>

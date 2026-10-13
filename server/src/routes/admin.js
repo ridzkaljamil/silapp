@@ -9,6 +9,7 @@ const { upload, UPLOAD_DIR } = require('../utils/upload');
 const wf = require('../services/workflow');
 const { detail } = require('../services/present');
 const { listApps } = require('../services/listing');
+const { sendInvoicePdf, invoiceDraft } = require('../services/invoice');
 
 router.use(requireAuth, allow('admin', 'superadmin'));
 
@@ -23,7 +24,7 @@ async function handledApp(req) {
 
 /** Pengajuan yang menunggu tindakan PSU: baru masuk, bukti/perpanjangan temuan, bukti bayar, invoice belum terbit. */
 const needsPsu = (a) => ['aktif', 'aksi'].includes(a.status) && (a.current_step.code.endsWith('-01') || a.findings_review > 0
-  || a.payment_status === 'menunggu' || (a.payment_status === 'belum' && ['ST-03', 'LAB-02', 'KAL-02'].includes(a.current_step.code)));
+  || a.payment_status === 'menunggu' || (a.payment_status === 'belum' && a.current_step.is_payment_step));
 
 /** Angka badge menu Antrean. */
 router.get('/counts', async (req, res, next) => {
@@ -33,7 +34,7 @@ router.get('/counts', async (req, res, next) => {
 router.get('/dashboard', async (req, res, next) => {
   try {
     const [w, p] = scope(req.user);
-    const months = +req.query.months === 12 ? 12 : 6;
+    const months = [3, 6, 12].includes(+req.query.months) ? +req.query.months : 6;
     const apps = await listApps(w, p);
     const by = (k) => apps.filter((a) => a.condition === k || a.status === k).length;
     const running = apps.filter((a) => ['aktif', 'aksi'].includes(a.status));
@@ -65,10 +66,12 @@ router.get('/applications', async (req, res, next) => {
   try {
     const [w, p] = scope(req.user);
     let where = w; const params = [...p];
-    if (req.query.status) { where += ' AND a.status=?'; params.push(req.query.status); }
     if (req.query.service) { where += ' AND s.code=?'; params.push(req.query.service); }
-    if (req.query.q) { where += ' AND (a.application_no LIKE ? OR u.company_name LIKE ? OR a.product_label LIKE ?)'; params.push(...Array(3).fill(`%${req.query.q}%`)); }
-    res.json(await listApps(where, params));
+    if (req.query.q) { where += ' AND (a.application_no LIKE ? OR a.tracking_code LIKE ? OR u.company_name LIKE ? OR a.product_label LIKE ?)'; params.push(...Array(4).fill(`%${req.query.q}%`)); }
+    const rows = await listApps(where, params);
+    // filter kondisi memakai kondisi yang tampil di layar (mis. Action Required juga karena temuan terbuka)
+    const c = req.query.condition;
+    res.json(!c ? rows : rows.filter((r) => (c === 'berjalan' ? ['aktif', 'aksi'].includes(r.status) : r.condition === c)));
   } catch (e) { next(e); }
 });
 
@@ -87,6 +90,7 @@ const fresh = async (app) => detail(await wf.loadApp(app.id), 'admin');
 router.post('/applications/:id/action', upload.fields([{ name: 'certificate', maxCount: 1 }, { name: 'attachments', maxCount: 5 }]), async (req, res, next) => {
   try {
     const app = await handledApp(req);
+    wf.assertStep(app, req.body.step);
     const { action, note } = req.body;
     const internal = req.body.internal === '1' || req.body.internal === true;
     const opts = { files: req.files?.attachments || [], docName: (req.body.doc_name || '').trim() || undefined };
@@ -99,14 +103,25 @@ router.post('/applications/:id/action', upload.fields([{ name: 'certificate', ma
   } catch (e) { next(e); }
 });
 
-/** Terbitkan / perbarui invoice. body: amount (SP/Kalibrasi, atau biaya tambahan lab), custom_prices (JSON), due_date, note. file: invoice_file */
-router.post('/applications/:id/invoice', upload.single('invoice_file'), async (req, res, next) => {
+/**
+ * Terbitkan / perbarui invoice. body (JSON): items [{label, qty, unit, price}] (SP/Kalibrasi), extra (biaya tambahan lab),
+ * custom_prices {paramId: harga} (parameter lainnya lab), with_pph23 (bool), due_date, note.
+ */
+router.post('/applications/:id/invoice', async (req, res, next) => {
   try {
     const app = await handledApp(req);
-    let customPrices = {};
-    try { customPrices = JSON.parse(req.body.custom_prices || '{}'); } catch { /* abaikan */ }
-    await wf.issueInvoice(app, req.user, { amount: req.body.amount, customPrices, dueDate: req.body.due_date, note: req.body.note, file: req.file?.filename });
+    const b = req.body || {};
+    wf.assertStep(app, b.step);
+    await wf.issueInvoice(app, req.user, { items: b.items, extra: b.extra, customPrices: b.custom_prices || {}, withPph23: !!b.with_pph23, dueDate: b.due_date, note: b.note });
     res.json(await fresh(app));
+  } catch (e) { next(e); }
+});
+
+/** Data awal form invoice: uraian pekerjaan bawaan + jatuh tempo default. */
+router.get('/applications/:id/invoice-draft', async (req, res, next) => {
+  try {
+    const app = await handledApp(req);
+    res.json(await invoiceDraft(app));
   } catch (e) { next(e); }
 });
 
@@ -114,6 +129,7 @@ router.post('/applications/:id/invoice', upload.single('invoice_file'), async (r
 router.post('/applications/:id/payment/verify', async (req, res, next) => {
   try {
     const app = await handledApp(req);
+    wf.assertStep(app, req.body.step);
     await wf.verifyPayment(app, req.user, req.body.valid !== false && req.body.valid !== 'false', req.body.note);
     res.json(await fresh(app));
   } catch (e) { next(e); }
@@ -142,6 +158,18 @@ router.post('/applications/:id/lab-info', upload.array('lhu', 3), async (req, re
   try {
     const app = await handledApp(req);
     await wf.updateLabInfo(app, req.user, { labName: req.body.lab_name, labEstimate: req.body.lab_estimate, labLink: req.body.lab_link, files: req.files });
+    res.json(await fresh(app));
+  } catch (e) { next(e); }
+});
+
+/** Lab pengujian: kode / identitas sampel diisi Admin saat sampel diregistrasi. body: code */
+router.post('/applications/:id/sample-code', async (req, res, next) => {
+  try {
+    const app = await handledApp(req);
+    if (!['KIM', 'FIS', 'MIK'].includes(app.service_code)) return res.status(400).json({ message: 'Kode sampel hanya untuk pengujian laboratorium.' });
+    const code = String(req.body.code || '').trim().slice(0, 120);
+    await q("DELETE FROM application_details WHERE application_id=? AND field_key='kode_sampel'", [app.id]);
+    if (code) await q("INSERT INTO application_details (application_id, field_key, field_label, field_value) VALUES (?,'kode_sampel','Kode Sampel',?)", [app.id, code]);
     res.json(await fresh(app));
   } catch (e) { next(e); }
 });
@@ -199,9 +227,7 @@ router.get('/applications/:id/documents/:docId', async (req, res, next) => {
 router.get('/applications/:id/invoice', async (req, res, next) => {
   try {
     const app = await handledApp(req);
-    const pay = await one('SELECT * FROM payments WHERE application_id=? ORDER BY id DESC LIMIT 1', [app.id]);
-    if (!pay?.invoice_file) return res.status(404).json({ message: 'File invoice belum ada.' });
-    res.download(path.join(UPLOAD_DIR, pay.invoice_file), `${pay.invoice_no.replace(/[\/\\]/g, '-')}.pdf`);
+    await sendInvoicePdf(app, res);
   } catch (e) { next(e); }
 });
 

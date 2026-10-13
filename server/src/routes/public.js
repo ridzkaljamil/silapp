@@ -1,7 +1,16 @@
 const router = require('express').Router();
+const path = require('path');
+const { UPLOAD_DIR } = require('../utils/upload');
+const { SILAPP_SQL } = require('./certificates');
 const { q, one } = require('../config/db');
 const { loadApp } = require('../services/workflow');
 const { detail } = require('../services/present');
+const { getContact } = require('../utils/settings');
+
+/** Kontak umum PSU (WhatsApp & email) untuk halaman publik dan bantuan. */
+router.get('/contact', async (req, res, next) => {
+  try { res.json(await getContact()); } catch (e) { next(e); }
+});
 
 /** Daftar layanan bertingkat + status tracking + jumlah ruang lingkup. */
 router.get('/services', async (req, res, next) => {
@@ -24,16 +33,27 @@ router.get('/services/:code/scope', async (req, res, next) => {
   try {
     const s = await one('SELECT id FROM services WHERE code=?', [req.params.code]);
     if (!s) return res.status(404).json({ message: 'Layanan tidak ditemukan.' });
-    const products = await q('SELECT id, category, sub_category, name, standard_no, scheme_reference, scheme_types, package_price FROM products WHERE service_id=? ORDER BY id', [s.id]);
-    const params = await q('SELECT pp.id, pp.product_id, pp.name, pp.method, pp.price FROM product_parameters pp JOIN products p ON p.id=pp.product_id WHERE p.service_id=? ORDER BY pp.id', [s.id]);
-    res.json(products.map((p) => ({ ...p, parameters: params.filter((x) => x.product_id === p.id) })));
+    const products = await q('SELECT id, category, sub_category, name, standard_no, scheme_reference, scheme_types, package_price, package_price_alt, alt_available, note FROM products WHERE service_id=? ORDER BY id', [s.id]);
+    const params = await q('SELECT pp.id, pp.product_id, pp.name, pp.method, pp.price, pp.price_alt FROM product_parameters pp JOIN products p ON p.id=pp.product_id WHERE p.service_id=? ORDER BY pp.id', [s.id]);
+    // SP: produk yang juga ada di ruang lingkup lab PSU (SNI sama) bisa diambil sebagai Paket LSPro + Lab
+    const labs = req.params.code === 'SP' ? await q(`SELECT p.standard_no, p.package_price, s.name service_name FROM products p JOIN services s ON s.id=p.service_id
+      WHERE s.code IN ('KIM','FIS','MIK') AND p.standard_no IS NOT NULL ORDER BY p.package_price IS NULL, p.id`) : [];
+    res.json(products.map((p) => {
+      const lab = p.standard_no && labs.find((l) => l.standard_no === p.standard_no);
+      return { ...p, alt_available: !!p.alt_available, parameters: params.filter((x) => x.product_id === p.id),
+        ...(req.params.code === 'SP' ? { lab_test: lab ? { service: lab.service_name, price: lab.package_price == null ? null : +lab.package_price } : null } : {}) };
+    }));
   } catch (e) { next(e); }
 });
 
 /** Lacak tanpa login: hanya progres. */
 router.get('/track/:code', async (req, res, next) => {
   try {
-    const row = await one('SELECT id FROM applications WHERE tracking_code=?', [String(req.params.code).toUpperCase()]);
+    const code = String(req.params.code).trim().toUpperCase();
+    let row = await one('SELECT id FROM applications WHERE tracking_code=?', [code]);
+    // kode format lama (SLP-XXXX-XXXX) dari email sebelum Oktober 2026 tetap bisa dipakai
+    const old = !row && /^SLP-([A-Z0-9]{4})-([A-Z0-9]{4})$/.exec(code);
+    if (old) row = await one('SELECT id FROM applications WHERE tracking_code LIKE ?', [`SLP__-${old[1]}${old[2]}`]);
     if (!row) return res.status(404).json({ message: 'Kode lacak tidak ditemukan.' });
     res.json(await detail(await loadApp(row.id), 'public'));
   } catch (e) { next(e); }
@@ -57,7 +77,6 @@ router.get('/services/:code/form', async (req, res, next) => {
  */
 router.get('/directory', async (req, res, next) => {
   try {
-    const { SILAPP_SQL } = require('./certificates');
     const silapp = await q(`${SILAPP_SQL} AND c.show_in_directory=1`);
     const legacy = await q('SELECT certificate_no, issued_at, status, factory_name, factory_address, product, sni_no FROM legacy_certificates');
     const pick = ({ certificate_no, issued_at, status, factory_name, factory_address, product, sni_no }) => ({ certificate_no, issued_at, status, factory_name, factory_address, product, sni_no });
@@ -70,7 +89,7 @@ router.get('/avatar/:file', (req, res) => {
   const f = req.params.file;
   if (!/^avatar-\d+-[a-f0-9]+\.(png|jpe?g)$/.test(f)) return res.status(404).end();
   res.set('Cache-Control', 'public, max-age=86400');
-  res.sendFile(require('path').join(require('../utils/upload').UPLOAD_DIR, f), (err) => err && !res.headersSent && res.status(404).end());
+  res.sendFile(path.join(UPLOAD_DIR, f), (err) => err && !res.headersSent && res.status(404).end());
 });
 
 module.exports = router;

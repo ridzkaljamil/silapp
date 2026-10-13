@@ -4,8 +4,8 @@ import { useEffect } from 'react';
 /* ---------- animasi muncul saat terlihat (scroll reveal) ---------- */
 const REVEAL_SEL = [
   '.page-head', '.hero > *', '.track-form', '.pub-intro', '.panel', '.stat', '.todo-card', '.help-card', '.todo-item',
-  '.app-card', '.panel tbody tr', '.pick-card', '.svc-card', '.cta-navy', '.steps-list li', '.f-row', '.decision-item', '.task-box', '.home-head',
-  'section', '.tabs', '.segmented', '.wizard', '.m-row', '.list-group-item', '.finding', '.choice',
+  '.app-card', '.pick-card', '.svc-card', '.cta-navy', '.steps-list li', '.f-row', '.decision-item', '.task-box', '.home-head',
+  'section', '.tabs', '.segmented', '.wizard', '.list-group-item', '.finding', '.choice',
 ].join(',');
 
 /**

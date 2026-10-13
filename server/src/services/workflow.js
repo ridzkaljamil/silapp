@@ -1,6 +1,6 @@
 /**
  * Logika alur status SILAPP, sesuai Rancangan Sistem Tracking
- * LSPro (ST-01..ST-10), Laboratorium Pengujian (LAB-01..LAB-08), dan Laboratorium Kalibrasi (KAL-01..KAL-09).
+ * LSPro (ST-01..ST-10), Laboratorium Pengujian (LAB-01..LAB-07), dan Laboratorium Kalibrasi (KAL-01..KAL-09).
  *
  * Aksi Admin di setiap tahap: setujui, minta_tindakan, abaikan, tolak (+ lampiran file).
  * Tambahan iterasi 2: invoice sebelum bayar, verifikasi bayar, temuan audit + perpanjangan,
@@ -10,6 +10,9 @@ const path = require('path');
 const { q, one } = require('../config/db');
 const { sendMail } = require('../utils/mailer');
 const { UPLOAD_DIR } = require('../utils/upload');
+const { optionLabel, taxes, PPN_LABEL } = require('../utils/pricing');
+const { getSettings } = require('../utils/settings');
+const { notifyCustomer, notifyStaff } = require('./notifications');
 
 const httpError = (status, message) => Object.assign(new Error(message), { status });
 const BLN = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Agu', 'Sep', 'Okt', 'Nov', 'Des'];
@@ -25,7 +28,7 @@ async function getSteps(serviceId) {
 
 async function loadApp(id) {
   const app = await one(
-    `SELECT a.*, s.code AS service_code, s.name AS service_name, s.bidang AS service_bidang,
+    `SELECT a.*, s.code AS service_code, s.name AS service_name, s.bidang AS service_bidang, s.est_text AS service_est,
             u.email AS user_email, u.name AS user_name, u.company_name, ${OPEN_FINDINGS} AS open_findings
        FROM applications a JOIN services s ON s.id=a.service_id JOIN users u ON u.id=a.user_id
       WHERE a.id=?`, [id]);
@@ -46,7 +49,16 @@ function assertCanHandle(user, app) {
   throw httpError(403, 'Pengajuan ini bukan bidang Anda.');
 }
 const assertOpen = (app) => {
-  if (!['aktif', 'aksi'].includes(app.status)) throw httpError(400, 'Pengajuan ini sudah ditutup atau selesai.');
+  if (!['aktif', 'aksi'].includes(app.status)) throw httpError(400, app.status === 'batal' ? 'Pengajuan ini sudah dibatalkan pelanggan.' : 'Pengajuan ini sudah ditutup atau selesai.');
+};
+
+/**
+ * Cegah aksi ganda: halaman Admin mengirim nomor tahap yang sedang dilihat. Jika tahap sudah berubah
+ * (diproses Admin lain / tab lain), aksi ditolak agar tahap tidak ikut terlewati.
+ */
+const assertStep = (app, seen) => {
+  if (seen === undefined || seen === null || seen === '') return;
+  if (+seen !== app.current_step_order) throw httpError(409, 'Tahap pengajuan ini baru saja diperbarui oleh pengguna lain. Halaman dimuat ulang, silakan periksa lagi.');
 };
 
 async function addLog(app, action, note, user, visible = true, order = app.current_step_order) {
@@ -62,12 +74,14 @@ async function addLog(app, action, note, user, visible = true, order = app.curre
 async function saveDocs(app, user, files, { docName, logId = null, findingId = null, visible = true } = {}) {
   for (const f of files || []) {
     await q(`INSERT INTO documents (application_id, doc_type, original_name, file_path, source, step_order, log_id, finding_id, customer_visible, uploaded_by)
-      VALUES (?,?,?,?,?,?,?,?,?,?)`, [app.id, docName || (user?.role === 'user' ? 'Dokumen pelanggan' : 'Lampiran dari PSU'), f.originalname, f.filename,
+      VALUES (?,?,?,?,?,?,?,?,?,?)`, [app.id, docName || (user?.role === 'user' ? 'Dokumen Pelanggan' : 'Lampiran dari PSU'), f.originalname, f.filename,
       user?.role === 'user' ? 'pelanggan' : 'admin', app.current_step_order, logId, findingId, visible ? 1 : 0, user ? user.id : null]);
   }
 }
 
-function notify(app, subject, body, attachments) {
+/** Kabari pelanggan: notifikasi di aplikasi + email. */
+async function notify(app, subject, body, attachments) {
+  await notifyCustomer(app, subject, `${app.application_no} · ${String(body).split('\n')[0]}`);
   return sendMail(app.user_email, `[SILAPP] ${subject} · ${app.application_no}`,
     `Yth. ${app.user_name} (${app.company_name || '-'}),\n\n${body}\n\nNomor pengajuan : ${app.application_no}\nKode lacak      : ${app.tracking_code}\nBuka SILAPP     : ${APP_URL()}/klien/pengajuan/${app.id}\n\nHormat kami,\nPT Penilai Standar Uji`,
     attachments);
@@ -86,17 +100,19 @@ function condition(app) {
   const st = stepOf(app);
   if (app.status === 'selesai') return app.service_code === 'SP' ? 'Certified' : 'Completed';
   if (app.status === 'ditolak') return 'Closed';
+  if (app.status === 'batal') return 'Cancelled';
   if (app.status === 'aksi' || app.open_findings > 0) return 'Action Required';
   if (st.is_payment_step && ['invoice', 'menunggu'].includes(app.payment_status)) return 'Waiting for Payment';
   if (app.service_code === 'KAL' && st.status_code === 'KAL-09') return 'Ready for Collection';
   if (app.service_code === 'KAL' && app.location === 'onsite' && ['KAL-04', 'KAL-05'].includes(st.status_code)) return 'On-Site Calibration';
-  if (isLabTesting(app) && st.status_code === 'LAB-03') return 'Waiting for Sample';
+  if (isLabTesting(app) && st.status_code === 'LAB-02') return 'Waiting for Sample';
   if (app.service_code === 'SP' && st.status_code === 'ST-04') return 'Scheduling';
   return 'On Progress';
 }
 
 async function setStep(app, order, user) {
-  await q('UPDATE applications SET current_step_order=?, status=?, action_note=NULL WHERE id=?', [order, 'aktif', app.id]);
+  const r = await q('UPDATE applications SET current_step_order=?, status=?, action_note=NULL WHERE id=? AND current_step_order=?', [order, 'aktif', app.id, app.current_step_order]);
+  if (!r.affectedRows) throw httpError(409, 'Tahap pengajuan ini baru saja diperbarui oleh pengguna lain. Halaman dimuat ulang, silakan periksa lagi.');
   app.current_step_order = order;
   await addLog(app, 'mulai', 'Tahap dimulai.', user);
 }
@@ -108,12 +124,11 @@ async function approve(app, user, { note, internal, certificateNo, certFile, fil
   const st = stepOf(app);
 
   if (st.is_payment_step && app.payment_status !== 'terverifikasi') {
-    if (app.payment_status !== 'menunggu') throw httpError(400, app.payment_status === 'belum'
-      ? 'Terbitkan invoice terlebih dahulu, lalu tunggu pelanggan mengunggah bukti bayar.'
-      : 'Pelanggan belum mengunggah bukti bayar untuk invoice ini.');
-    await markPaid(app, user);
+    throw httpError(400, app.payment_status === 'belum' ? 'Terbitkan invoice terlebih dahulu, lalu tunggu pelanggan mengunggah bukti bayar.'
+      : app.payment_status === 'invoice' ? 'Pelanggan belum mengunggah bukti bayar untuk invoice ini.'
+        : 'Periksa dan verifikasi bukti bayar terlebih dahulu.');
   }
-  if (isLabTesting(app) && st.status_code === 'LAB-05') {
+  if (isLabTesting(app) && st.status_code === 'LAB-04') {
     const open = await one('SELECT COUNT(*) n FROM application_parameters WHERE application_id=? AND status<>"selesai"', [app.id]);
     if (open.n > 0) throw httpError(400, `Masih ada ${open.n} parameter yang belum selesai diuji.`);
   }
@@ -154,7 +169,7 @@ async function approve(app, user, { note, internal, certificateNo, certFile, fil
   const certIssued = app.steps.some((s) => s.is_certificate_step && s.step_order < next);
   await setStep(app, next, user);
   if (next === last && !nextStep.is_optional && certIssued && app.service_code !== 'KAL') {
-    // LAB-08: LHU terbit = selesai otomatis
+    // LAB-07: LHU terbit = selesai otomatis
     await q('UPDATE applications SET status="selesai" WHERE id=?', [app.id]);
     await notifyIssued(app);
     return;
@@ -197,6 +212,7 @@ async function ignore(app, user, note, internal, { files, docName } = {}) {
 
 async function reject(app, user, note, { files, docName } = {}) {
   if (!note) throw httpError(400, 'Alasan penolakan wajib diisi.');
+  assertOpen(app);
   await q('UPDATE applications SET status="ditolak", reject_note=? WHERE id=?', [note, app.id]);
   const logId = await addLog(app, 'tolak', `Pengajuan ditutup: ${note}`, user);
   await saveDocs(app, user, files, { docName, logId });
@@ -204,6 +220,8 @@ async function reject(app, user, note, { files, docName } = {}) {
 }
 
 async function updateParameter(app, user, paramId, status) {
+  if (!isLabTesting(app)) throw httpError(400, 'Status parameter hanya untuk pengujian laboratorium.');
+  assertOpen(app);
   if (!['antri', 'uji', 'selesai'].includes(status)) throw httpError(400, 'Status parameter tidak valid.');
   const p = await one('SELECT * FROM application_parameters WHERE id=? AND application_id=?', [paramId, app.id]);
   if (!p) throw httpError(404, 'Parameter tidak ditemukan.');
@@ -214,23 +232,33 @@ async function updateParameter(app, user, paramId, status) {
 /* ------------------------- INVOICE & PEMBAYARAN ------------------------- */
 
 /**
- * Hitung tagihan. Lab: dari daftar harga (paket SNI / per parameter) × jumlah sampel,
- * parameter "Lainnya" diisi Admin. SP & Kalibrasi: nominal hasil kesepakatan diisi Admin.
- * Semua harga sudah termasuk PPN 11%.
+ * Rincian pekerjaan invoice.
+ * Lab: dari daftar harga (paket SNI / per parameter) × jumlah sampel; harga parameter "Lainnya" diisi Admin.
+ * SP & Kalibrasi: baris pekerjaan (jumlah × harga satuan) diisi Admin; paket LSPro + Lab = baris sertifikasi + baris uji lab.
+ * Semua harga belum termasuk PPN; pajak dihitung oleh utils/pricing.taxes().
  */
-async function computeInvoice(app, { amount, customPrices = {} }) {
+async function invoiceItems(app, { items: manual = [], extra, customPrices = {} }) {
   if (!isLabTesting(app)) {
-    const n = Math.round(+amount);
-    if (!n || n <= 0) throw httpError(400, 'Nominal invoice (hasil kesepakatan harga) wajib diisi.');
-    return { total: n, items: [{ label: `Biaya ${app.service_name} (sesuai kesepakatan)`, amount: n }] };
+    // tiap baris: uraian, jumlah × harga satuan (mis. "2 sampel × Rp2.500.000"); invoice lama hanya punya amount
+    const rows = (Array.isArray(manual) ? manual : []).map((x) => {
+      const qty = Math.min(999, Math.max(1, Math.round(+x.qty || 1)));
+      const price = Math.round(+(x.price ?? x.amount) || 0);
+      return { label: String(x.label || '').trim().slice(0, 600), qty, unit: String(x.unit || '').trim().slice(0, 20), price, amount: qty * price };
+    }).filter((x) => x.label || x.price);
+    if (!rows.length) throw httpError(400, 'Isi minimal satu baris pekerjaan beserta harganya.');
+    const bad = rows.find((x) => !x.label || x.price <= 0);
+    if (bad) throw httpError(400, 'Setiap baris pekerjaan wajib berisi uraian dan harga lebih dari 0.');
+    return rows;
   }
   const qty = Number((await one('SELECT COALESCE(SUM(quantity),1) n FROM samples WHERE application_id=?', [app.id])).n) || 1;
   const params = await q('SELECT * FROM application_parameters WHERE application_id=? ORDER BY id', [app.id]);
   const items = [];
+  const opt = optionLabel(app.service_code, app.price_option);
   if (app.full_sni) {
-    const prod = await one('SELECT name, package_price FROM products WHERE id=?', [app.product_id]);
-    if (!prod?.package_price) throw httpError(400, 'Harga paket "parameter lengkap sesuai SNI" untuk produk ini belum diatur di Daftar harga lab.');
-    items.push({ label: `Paket parameter lengkap sesuai SNI · ${prod.name}`, qty, price: +prod.package_price, amount: +prod.package_price * qty });
+    const prod = await one('SELECT name, package_price, package_price_alt FROM products WHERE id=?', [app.product_id]);
+    const pkg = app.price_option === 'alt' ? (prod?.package_price_alt ?? prod?.package_price) : prod?.package_price;
+    if (!pkg) throw httpError(400, `Harga paket "parameter lengkap sesuai SNI"${opt ? ` (${opt})` : ''} untuk produk ini belum diatur. Atur dulu di Kelola Layanan > Ruang Lingkup & Harga.`);
+    items.push({ label: `Paket parameter lengkap sesuai SNI · ${prod.name}${opt ? ` · ${opt}` : ''}`, qty, price: +pkg, amount: +pkg * qty });
   }
   for (const p of params) {
     if (app.full_sni && !p.is_custom) continue;
@@ -240,33 +268,51 @@ async function computeInvoice(app, { amount, customPrices = {} }) {
       if (price === undefined || price === null || price === '' || +price < 0) throw httpError(400, `Isi harga parameter "${p.name}" (parameter lainnya).`);
       await q('UPDATE application_parameters SET price_snapshot=? WHERE id=?', [+price, p.id]);
     }
-    if (price === null) throw httpError(400, `Harga parameter "${p.name}" belum diatur di Daftar harga lab.`);
-    items.push({ label: p.name + (p.is_custom ? ' (lainnya)' : ''), qty, price: +price, amount: +price * qty });
+    if (price === null) {
+      // harga belum ada saat diajukan: ambil harga terbaru dari daftar harga
+      const cur = p.parameter_id ? await one('SELECT price, price_alt FROM product_parameters WHERE id=?', [p.parameter_id]) : null;
+      price = cur ? (app.price_option === 'alt' ? (cur.price_alt ?? cur.price) : cur.price) : null;
+      if (price === null || price === undefined) throw httpError(400, `Harga parameter "${p.name}" belum diatur. Atur dulu di Kelola Layanan > Ruang Lingkup & Harga.`);
+      await q('UPDATE application_parameters SET price_snapshot=? WHERE id=?', [+price, p.id]);
+    }
+    items.push({ label: p.name + (p.is_custom ? ' (lainnya)' : opt ? ` · ${opt}` : ''), qty, price: +price, amount: +price * qty });
   }
-  const extra = Math.round(+amount || 0);
-  if (extra > 0) items.push({ label: 'Biaya tambahan', amount: extra });
-  return { total: items.reduce((t, i) => t + i.amount, 0), items };
+  const add = Math.round(+extra || 0);
+  if (add > 0) items.push({ label: app.price_option === 'alt' && app.service_code === 'KIM' ? 'Biaya tambahan Ekspress' : 'Biaya tambahan', amount: add });
+  return items;
 }
 
-async function issueInvoice(app, user, { amount, customPrices, dueDate, note, file }) {
+const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
+/** Nomor invoice berurutan per tahun: 001/KEU/PSU/X/2026 (kode diatur di Pengaturan Umum). */
+async function nextInvoiceNo() {
+  const now = new Date();
+  const year = now.getFullYear();
+  const { invoice_code: code } = await getSettings(['invoice_code']);
+  const r = await one('SELECT COALESCE(MAX(invoice_seq),0)+1 n FROM payments WHERE invoice_year=?', [year]);
+  return { seq: r.n, year, no: `${String(r.n).padStart(3, '0')}/KEU/${code || 'PSU'}/${ROMAN[now.getMonth()]}/${year}` };
+}
+
+async function issueInvoice(app, user, { items: manual, extra, customPrices, withPph23, dueDate, note }) {
   assertOpen(app);
   if (!stepOf(app).is_payment_step) throw httpError(400, 'Invoice hanya dapat diterbitkan pada tahap pembayaran.');
   if (!['belum', 'invoice'].includes(app.payment_status)) throw httpError(400, 'Invoice tidak dapat diubah karena bukti bayar sudah diunggah.');
-  const { total, items } = await computeInvoice(app, { amount, customPrices });
-  const dpp = Math.round(total / 1.11);
+  const items = await invoiceItems(app, { items: manual, extra, customPrices });
+  const t = taxes(items.reduce((s, i) => s + i.amount, 0), !!withPph23);
+  if (t.price <= 0) throw httpError(400, 'Total harga invoice harus lebih dari 0.');
   const existing = await one('SELECT * FROM payments WHERE application_id=? AND status="invoice" ORDER BY id DESC LIMIT 1', [app.id]);
-  const invoiceNo = existing?.invoice_no || `INV/PSU/${new Date().getFullYear()}/${String(app.id).padStart(5, '0')}`;
-  const vals = [total, dpp, total - dpp, JSON.stringify(items), dueDate || null, note || null, user.id];
+  const num = existing ? { no: existing.invoice_no } : await nextInvoiceNo();
+  const vals = [t.grandTotal, t.price, t.dppLain, t.ppn, t.total, t.pph23, withPph23 ? 1 : 0, JSON.stringify(items), dueDate || null, note || null, user.id];
   if (existing) {
-    await q('UPDATE payments SET amount=?, dpp=?, ppn=?, items=?, due_date=?, note=?, issued_by=?, created_at=NOW() WHERE id=?', [...vals, existing.id]);
-    if (file) await q('UPDATE payments SET invoice_file=? WHERE id=?', [file, existing.id]);
+    await q(`UPDATE payments SET amount=?, dpp=?, dpp_lain=?, ppn=?, total=?, pph23=?, with_pph23=?, items=?, due_date=?, note=?, issued_by=?, created_at=NOW()
+      WHERE id=?`, [...vals, existing.id]);
   } else {
-    await q('INSERT INTO payments (application_id, invoice_no, amount, dpp, ppn, items, due_date, note, issued_by, invoice_file, status) VALUES (?,?,?,?,?,?,?,?,?,?,"invoice")',
-      [app.id, invoiceNo, ...vals, file || null]);
+    await q(`INSERT INTO payments (application_id, invoice_no, invoice_seq, invoice_year, amount, dpp, dpp_lain, ppn, total, pph23, with_pph23, items, due_date, note, issued_by, status)
+      VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"invoice")`, [app.id, num.no, num.seq, num.year, ...vals]);
   }
   await q('UPDATE applications SET payment_status="invoice" WHERE id=?', [app.id]);
-  await addLog(app, 'invoice', `Invoice ${invoiceNo} ${existing ? 'diperbarui' : 'diterbitkan'}: ${rupiah(total)} (termasuk PPN 11%).${note ? ' ' + note : ''}`, user);
-  await notify(app, `Invoice ${invoiceNo}`, `Invoice untuk pengajuan Anda telah terbit sebesar ${rupiah(total)} (sudah termasuk PPN 11%).${dueDate ? `\nBatas pembayaran: ${tgl(dueDate)}.` : ''}\nSilakan lakukan pembayaran lalu unggah bukti transfer melalui akun SILAPP.`);
+  const breakdown = `Harga ${rupiah(t.price)} + ${PPN_LABEL} ${rupiah(t.ppn)}${t.pph23 ? ` − PPh 23 ${rupiah(t.pph23)}` : ''}`;
+  await addLog(app, 'invoice', `Invoice ${num.no} ${existing ? 'diperbarui' : 'diterbitkan'}: ${rupiah(t.grandTotal)} (${breakdown}).${note ? ' ' + note : ''}`, user);
+  await notify(app, `Invoice ${num.no}`, `Invoice untuk pengajuan Anda telah terbit dengan total pembayaran ${rupiah(t.grandTotal)} (${breakdown}).${dueDate ? `\nJatuh tempo: ${tgl(dueDate)}.` : ''}\nInvoice dapat diunduh di akun SILAPP. Setelah membayar, unggah bukti transfer melalui akun SILAPP.`);
 }
 
 async function markPaid(app, user) {
@@ -308,7 +354,12 @@ async function tryAutoAdvance(app) {
   const fresh = await loadApp(app.id);
   if (fresh.service_code !== 'SP' || stepOf(fresh).status_code !== 'ST-03' || fresh.status !== 'aktif') return false;
   if (fresh.payment_status !== 'terverifikasi' || !(await allDocsDownloaded(fresh))) return false;
-  await approve(fresh, null, { auto: 'Pembayaran terverifikasi dan seluruh berkas telah diunduh Super Admin. Tahap selesai otomatis.' });
+  try {
+    await approve(fresh, null, { auto: 'Pembayaran terverifikasi dan seluruh berkas telah diunduh Super Admin. Tahap selesai otomatis.' });
+  } catch (e) {
+    if (e.status === 409) return false; // sudah dimajukan oleh permintaan lain pada saat yang sama
+    throw e;
+  }
   return true;
 }
 
@@ -391,7 +442,8 @@ async function customerFindingReply(app, user, id, note, files) {
   if (!files?.length && !note) throw httpError(400, 'Unggah bukti perbaikan atau isi keterangan.');
   await q('UPDATE findings SET status="dikirim", customer_note=? WHERE id=?', [note || null, id]);
   const logId = await addLog(app, 'tanggapan', `Bukti perbaikan ${fLabel(f)} dikirim.${note ? ' ' + note : ''}`, user);
-  await saveDocs(app, user, files, { docName: `Bukti perbaikan ${fLabel(f)}`, logId, findingId: id });
+  await saveDocs(app, user, files, { docName: `Bukti Perbaikan ${fLabel(f)}`, logId, findingId: id });
+  await notifyStaff(app, 'Bukti perbaikan temuan masuk', `${app.application_no} · ${app.company_name} · ${fLabel(f)}`);
 }
 
 /** Pelanggan mengajukan perpanjangan 1 bulan (maksimal 1 kali per temuan). */
@@ -404,6 +456,7 @@ async function customerExtension(app, user, id, reason) {
   if (!reason) throw httpError(400, 'Isi alasan perpanjangan.');
   await q('UPDATE findings SET extension_status="diajukan", extension_reason=? WHERE id=?', [reason, id]);
   await addLog(app, 'perpanjangan', `Pelanggan mengajukan perpanjangan 1 bulan untuk ${fLabel(f)}: ${reason}`, user);
+  await notifyStaff(app, 'Permintaan perpanjangan temuan', `${app.application_no} · ${app.company_name} · ${fLabel(f)}`);
 }
 
 /* ------------------------- INFO PENGUJIAN LAB (SP ST-06) ------------------------- */
@@ -425,10 +478,12 @@ async function customerReply(app, user, note, files) {
   if (app.status !== 'aksi') throw httpError(400, 'Tidak ada tindakan yang diminta saat ini.');
   await q('UPDATE applications SET status="aktif" WHERE id=?', [app.id]);
   const logId = await addLog(app, 'tanggapan', note || 'Pelanggan mengirim tanggapan / dokumen perbaikan.', user);
-  await saveDocs(app, user, files, { docName: 'Tanggapan / perbaikan', logId });
+  await saveDocs(app, user, files, { docName: 'Tanggapan / Perbaikan', logId });
+  await notifyStaff(app, 'Pelanggan mengirim tanggapan', `${app.application_no} · ${app.company_name}`);
 }
 
 async function customerPay(app, user, proofPath) {
+  assertOpen(app);
   const st = stepOf(app);
   if (!st.is_payment_step) throw httpError(400, 'Pengajuan belum berada di tahap pembayaran.');
   if (app.payment_status === 'belum') throw httpError(400, 'Invoice belum diterbitkan PSU.');
@@ -436,24 +491,36 @@ async function customerPay(app, user, proofPath) {
   await q('UPDATE payments SET proof_path=?, paid_at=NOW(3), status="menunggu" WHERE application_id=? AND status="invoice"', [proofPath, app.id]);
   await q('UPDATE applications SET payment_status="menunggu" WHERE id=?', [app.id]);
   await addLog(app, 'bayar', 'Pelanggan mengunggah bukti pembayaran.', user);
+  await notifyStaff(app, 'Bukti bayar masuk, perlu diverifikasi', `${app.application_no} · ${app.company_name}`);
 }
 
 /** Survei kepuasan: wajib sebelum unduh sertifikat/LHU. Setelah terkirim, dokumen dikirim lewat email. */
-async function submitSurvey(app, user, { scores, suggestion }) {
+async function submitSurvey(app, user, b) {
   if (app.status !== 'selesai') throw httpError(400, 'Survei dapat diisi setelah dokumen terbit.');
   const cert = await one('SELECT * FROM certificates WHERE application_id=?', [app.id]);
   if (!cert) throw httpError(400, 'Dokumen belum terbit.');
   if (await one('SELECT id FROM survey_responses WHERE application_id=?', [app.id])) throw httpError(400, 'Survei untuk pengajuan ini sudah diisi.');
-  const questions = await q('SELECT * FROM survey_questions WHERE is_active=1 ORDER BY sort_order, id');
+  const txt = (v, n) => String(v ?? '').trim().slice(0, n);
+  const company = txt(b.company_name, 160);
+  const respondent = txt(b.respondent_name, 120);
+  if (!company || !respondent) throw httpError(400, 'Nama perusahaan/instansi dan nama responden wajib diisi.');
+  const bidang = app.service_bidang;
+  const questions = await q('SELECT * FROM survey_questions WHERE bidang=? AND is_active=1 ORDER BY sort_order, id', [bidang]);
+  const scores = b.scores || {};
   for (const qu of questions) {
-    const v = +(scores || {})[qu.id];
-    if (!(v >= 1 && v <= 5)) throw httpError(400, 'Mohon beri nilai 1–5 untuk semua pertanyaan.');
+    const v = +scores[qu.id];
+    if (!(v >= 1 && v <= 5)) throw httpError(400, 'Mohon beri nilai 1–5 untuk semua pertanyaan penilaian.');
   }
-  const r = await q('INSERT INTO survey_responses (application_id, user_id, suggestion) VALUES (?,?,?)', [app.id, user.id, suggestion || null]);
+  const avg = questions.length ? questions.reduce((t, qu) => t + +scores[qu.id], 0) / questions.length : null;
+  const contactOk = b.contact_ok === true ? 1 : b.contact_ok === false ? 0 : null;
+  const r = await q(`INSERT INTO survey_responses (application_id, user_id, bidang, company_name, respondent_name, reference_no, avg_score, suggestion, contact_ok, contact_info)
+    VALUES (?,?,?,?,?,?,?,?,?,?)`, [app.id, user.id, bidang, company, respondent, txt(b.reference_no, 80) || null, avg === null ? null : avg.toFixed(2),
+    txt(b.suggestion, 3000) || null, contactOk, contactOk ? txt(b.contact_info, 160) || null : null]);
   for (const qu of questions) {
     await q('INSERT INTO survey_answers (response_id, question_id, question, score) VALUES (?,?,?,?)', [r.insertId, qu.id, qu.question, +scores[qu.id]]);
   }
   await addLog(app, 'survei', 'Pelanggan mengisi Survei Kepuasan Pelanggan. Dokumen dapat diunduh.', user);
+  await notifyStaff(app, 'Survei kepuasan diisi', `${app.application_no} · ${app.company_name} · rata-rata ${avg === null ? '-' : avg.toFixed(2)}`);
   const w = docWord(app);
   await notify(app, `Penyampaian dokumen ${w}`,
     `Terima kasih atas partisipasi Saudara dalam mengisi Survei Kepuasan Pelanggan.\n\nBersama email ini kami lampirkan ${w.toLowerCase()} nomor ${cert.certificate_no}. ` +
@@ -462,7 +529,7 @@ async function submitSurvey(app, user, { scores, suggestion }) {
 }
 
 module.exports = {
-  httpError, getSteps, loadApp, stepOf, condition, isSkipped, assertCanHandle, addLog, notify,
+  httpError, getSteps, loadApp, stepOf, condition, isSkipped, assertCanHandle, assertStep, addLog, notify,
   OPEN_FINDINGS, approve, requestAction, ignore, reject, updateParameter, issueInvoice, verifyPayment, tryAutoAdvance, allDocsDownloaded,
   addFindings, adminFinding, customerFindingReply, customerExtension, updateLabInfo, customerReply, customerPay, submitSurvey,
 };

@@ -5,7 +5,7 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
-DROP TABLE IF EXISTS survey_answers, survey_responses, survey_questions, settings, legacy_certificates,
+DROP TABLE IF EXISTS drafts, doc_templates, notifications, survey_followups, survey_answers, survey_responses, survey_questions, settings, legacy_certificates,
   findings, service_fields, service_documents,
   certificates, status_logs, payments, documents, samples, equipment,
   application_parameters, application_details, applications, product_parameters, products,
@@ -76,7 +76,10 @@ CREATE TABLE products (
   standard_no      VARCHAR(80)  NULL,
   scheme_reference VARCHAR(160) NULL,
   scheme_types     VARCHAR(40)  NULL,
-  package_price    DECIMAL(14,2) NULL,   -- harga paket "parameter lengkap sesuai SNI" (Lab), sudah termasuk PPN
+  package_price    DECIMAL(14,2) NULL,   -- harga paket "parameter lengkap sesuai SNI" (Lab): Reguler / Dalam Negeri
+  package_price_alt DECIMAL(14,2) NULL,  -- harga paket opsi kedua: Ekspress (Kimia) / Luar Negeri (Fisika)
+  alt_available    TINYINT(1) NOT NULL DEFAULT 1,  -- 0 = opsi kedua belum tersedia (mis. Ekspress, ada parameter subkon)
+  note             VARCHAR(255) NULL,
   CONSTRAINT fk_products_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
@@ -86,7 +89,8 @@ CREATE TABLE product_parameters (
   product_id INT NOT NULL,
   name       VARCHAR(160) NOT NULL,
   method     VARCHAR(160) NULL,
-  price      DECIMAL(14,2) NULL,
+  price      DECIMAL(14,2) NULL,          -- Reguler / Dalam Negeri
+  price_alt  DECIMAL(14,2) NULL,          -- Ekspress / Luar Negeri
   CONSTRAINT fk_params_product FOREIGN KEY (product_id) REFERENCES products(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
@@ -94,19 +98,21 @@ CREATE TABLE product_parameters (
 CREATE TABLE applications (
   id                 INT AUTO_INCREMENT PRIMARY KEY,
   application_no     VARCHAR(30) NOT NULL UNIQUE,
-  tracking_code      CHAR(13)    NOT NULL UNIQUE,
+  tracking_code      VARCHAR(16) NOT NULL UNIQUE,      -- SLP26-X2KD4M7A (26 = tahun pengajuan)
   user_id            INT NOT NULL,
   service_id         INT NOT NULL,
   product_id         INT NULL,
   product_label      VARCHAR(255) NOT NULL,
   current_step_order INT NOT NULL DEFAULT 1,
-  status             ENUM('aktif','aksi','ditolak','selesai') NOT NULL DEFAULT 'aktif',
-  application_type   VARCHAR(40) NULL,
+  status             ENUM('aktif','aksi','ditolak','selesai','batal') NOT NULL DEFAULT 'aktif',  -- batal = dibatalkan pelanggan
+  application_type   VARCHAR(120) NULL,                 -- bisa lebih dari satu, dipisah koma (mis. Sertifikasi Awal, Surveillance)
   scheme             VARCHAR(20) NULL,
+  origin             ENUM('dn','ln') NULL,              -- SP: produk Dalam Negeri / Luar Negeri
   location           ENUM('lab','onsite') NULL,
   nc_flag            TINYINT(1) NOT NULL DEFAULT 0,
   is_package         TINYINT(1) NOT NULL DEFAULT 0,      -- paket Sertifikasi Produk + Pengujian Lab
   full_sni           TINYINT(1) NOT NULL DEFAULT 0,      -- Lab: parameter lengkap sesuai SNI (harga paket)
+  price_option       ENUM('std','alt') NOT NULL DEFAULT 'std', -- Lab: Reguler/Dalam Negeri (std) atau Ekspress/Luar Negeri (alt)
   payment_status     ENUM('belum','invoice','menunggu','terverifikasi') NOT NULL DEFAULT 'belum',
   docs_downloaded_at DATETIME(3) NULL,                      -- Super Admin mengunduh semua berkas (ZIP)
   audit_report_date  DATE NULL,                          -- tanggal laporan audit (dasar tenggat temuan)
@@ -117,6 +123,7 @@ CREATE TABLE applications (
   reject_note        TEXT NULL,
   created_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at         DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  KEY idx_app_status (status, updated_at),
   CONSTRAINT fk_app_user    FOREIGN KEY (user_id)    REFERENCES users(id),
   CONSTRAINT fk_app_service FOREIGN KEY (service_id) REFERENCES services(id),
   CONSTRAINT fk_app_product FOREIGN KEY (product_id) REFERENCES products(id)
@@ -199,9 +206,15 @@ CREATE TABLE payments (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   application_id INT NOT NULL,
   invoice_no     VARCHAR(40) NOT NULL,
-  amount         DECIMAL(14,2) NULL,          -- total, sudah termasuk PPN
-  dpp            DECIMAL(14,2) NULL,
-  ppn            DECIMAL(14,2) NULL,
+  invoice_seq    INT NULL,                    -- nomor urut per tahun (001/KEU/PSU/X/2026)
+  invoice_year   INT NULL,
+  amount         DECIMAL(14,2) NULL,          -- grand total yang dibayar (harga + PPN − PPh 23)
+  dpp            DECIMAL(14,2) NULL,          -- harga pekerjaan (belum PPN)
+  dpp_lain       DECIMAL(14,2) NULL,          -- DPP nilai lain = 11/12 × harga
+  ppn            DECIMAL(14,2) NULL,          -- PPN 12% × DPP nilai lain
+  total          DECIMAL(14,2) NULL,          -- harga + PPN
+  pph23          DECIMAL(14,2) NOT NULL DEFAULT 0, -- PPh 23 2% × harga (jika dipotong)
+  with_pph23     TINYINT(1) NOT NULL DEFAULT 0,
   items          TEXT NULL,                   -- rincian (JSON)
   invoice_file   VARCHAR(255) NULL,
   due_date       DATE NULL,
@@ -225,7 +238,7 @@ CREATE TABLE status_logs (
   status_code      VARCHAR(10) NOT NULL,
   step_name        VARCHAR(120) NOT NULL,
   action           ENUM('buat','mulai','setujui','minta_tindakan','tanggapan','abaikan','tolak','bayar','parameter','terbit',
-                        'invoice','lampiran','temuan','perpanjangan','unduh','survei','info') NOT NULL,
+                        'invoice','lampiran','temuan','perpanjangan','unduh','survei','info','batal') NOT NULL,
   note             TEXT NULL,
   customer_visible TINYINT(1) NOT NULL DEFAULT 1,
   pic_user_id      INT NULL,
@@ -291,6 +304,7 @@ CREATE TABLE service_documents (
   name            VARCHAR(120) NOT NULL,
   required        TINYINT(1) NOT NULL DEFAULT 0,
   admin_if_package TINYINT(1) NOT NULL DEFAULT 0,  -- paket LSPro + Lab: diunggah Admin, pelanggan opsional
+  show_when       VARCHAR(10) NULL,                 -- SURV: hanya diminta jika pelanggan mencentang Surveillance
   sort_order      INT NOT NULL DEFAULT 0,
   is_active       TINYINT(1) NOT NULL DEFAULT 1,
   CONSTRAINT fk_sd_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
@@ -299,6 +313,7 @@ CREATE TABLE service_documents (
 -- Survei kepuasan pelanggan (wajib sebelum unduh sertifikat/LHU, setiap penerbitan)
 CREATE TABLE survey_questions (
   id         INT AUTO_INCREMENT PRIMARY KEY,
+  bidang     ENUM('SP','LAB','KAL') NOT NULL DEFAULT 'SP',  -- kuesioner per layanan: LSPro, Lab Pengujian, Lab Kalibrasi
   question   VARCHAR(255) NOT NULL,
   sort_order INT NOT NULL DEFAULT 0,
   is_active  TINYINT(1) NOT NULL DEFAULT 1
@@ -308,7 +323,14 @@ CREATE TABLE survey_responses (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   application_id INT NOT NULL UNIQUE,
   user_id        INT NOT NULL,
-  suggestion     TEXT NULL,
+  bidang         ENUM('SP','LAB','KAL') NOT NULL DEFAULT 'SP',
+  company_name   VARCHAR(160) NULL,       -- A. identitas pelanggan
+  respondent_name VARCHAR(120) NULL,
+  reference_no   VARCHAR(80) NULL,        -- nomor layanan/order/sertifikat (opsional)
+  avg_score      DECIMAL(3,2) NULL,
+  suggestion     TEXT NULL,               -- C. saran dan masukan
+  contact_ok     TINYINT(1) NULL,         -- D. bersedia dihubungi kembali (NULL = tidak menjawab)
+  contact_info   VARCHAR(160) NULL,
   created_at     DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
   CONSTRAINT fk_sr_app  FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE,
   CONSTRAINT fk_sr_user FOREIGN KEY (user_id) REFERENCES users(id)
@@ -321,6 +343,30 @@ CREATE TABLE survey_answers (
   question    VARCHAR(255) NOT NULL,   -- salinan teks pertanyaan saat diisi
   score       TINYINT NOT NULL,
   CONSTRAINT fk_sa_resp FOREIGN KEY (response_id) REFERENCES survey_responses(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Riwayat tindak lanjut atas masukan survei (dicatat Super Admin)
+CREATE TABLE survey_followups (
+  id          INT AUTO_INCREMENT PRIMARY KEY,
+  response_id INT NOT NULL,
+  user_id     INT NULL,
+  note        TEXT NOT NULL,
+  created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_sf_resp FOREIGN KEY (response_id) REFERENCES survey_responses(id) ON DELETE CASCADE,
+  CONSTRAINT fk_sf_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB;
+
+-- Notifikasi di dalam aplikasi (ikon lonceng)
+CREATE TABLE notifications (
+  id         INT AUTO_INCREMENT PRIMARY KEY,
+  user_id    INT NOT NULL,
+  title      VARCHAR(160) NOT NULL,
+  body       VARCHAR(300) NULL,
+  link       VARCHAR(160) NULL,
+  is_read    TINYINT(1) NOT NULL DEFAULT 0,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_notif_user (user_id, is_read),
+  CONSTRAINT fk_notif_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
 -- Pengaturan umum (teks ucapan terima kasih, dll.)
@@ -341,4 +387,25 @@ CREATE TABLE legacy_certificates (
   status          ENUM('aktif','tidak_aktif') NOT NULL DEFAULT 'aktif',
   created_by      INT NULL,
   created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- Draft Ajukan Layanan (satu draft per pelanggan, berkas tidak ikut disimpan)
+CREATE TABLE drafts (
+  user_id     INT PRIMARY KEY,
+  service_code VARCHAR(10) NOT NULL,
+  stage       TINYINT NOT NULL DEFAULT 1,
+  payload     MEDIUMTEXT NOT NULL,
+  updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_draft_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Template dokumen yang diunduh pelanggan (file Word, bisa diganti Super Admin)
+CREATE TABLE doc_templates (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  name          VARCHAR(120) NOT NULL UNIQUE,
+  description   VARCHAR(255) NULL,
+  file_path     VARCHAR(255) NOT NULL,
+  original_name VARCHAR(255) NOT NULL,
+  sort_order    INT NOT NULL DEFAULT 0,
+  updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;

@@ -17,8 +17,8 @@ export default function FindingReview({ f, app, onChange, onClose, onDownloadDoc
   return (
     <Sheet open={!!f} onClose={onClose} icon="search" title={f ? `Tinjau temuan ${f.category} #${f.id}` : ''}
       footer={f && <>
-        {f.status === 'dikirim' && <button className="btn btn-outline-warning" disabled={busy} onClick={() => run('ulang')}>Minta perbaikan ulang</button>}
-        <button className="btn btn-primary" disabled={busy} onClick={() => run('tutup')}><i className="bi bi-check2" />Tutup temuan</button>
+        {f.status === 'dikirim' && <button className="btn btn-outline-warning" disabled={busy} onClick={() => run('ulang')}>Minta Perbaikan Ulang</button>}
+        <button className="btn btn-primary" disabled={busy} onClick={() => run('tutup')}><i className="bi bi-check2" />Tutup Temuan</button>
       </>}>
       {f && (
         <div className="d-flex flex-column gap-3">
@@ -33,16 +33,16 @@ export default function FindingReview({ f, app, onChange, onClose, onDownloadDoc
           {f.extension_status === 'diajukan' && (
             <div className="decision-item">
               <div className="small"><b>Perpanjangan 1 bulan diajukan.</b>{f.extension_reason && <> Alasan: "{f.extension_reason}"</>}</div>
-              <div className="d-flex gap-2 mt-2"><button className="btn btn-sm btn-primary" disabled={busy} onClick={() => run('perpanjang_setuju')}>Setujui perpanjangan</button><button className="btn btn-sm btn-outline-secondary" disabled={busy} onClick={() => run('perpanjang_tolak')}>Tolak</button></div>
+              <div className="d-flex gap-2 mt-2"><button className="btn btn-sm btn-primary" disabled={busy} onClick={() => run('perpanjang_setuju')}>Setujui Perpanjangan</button><button className="btn btn-sm btn-outline-secondary" disabled={busy} onClick={() => run('perpanjang_tolak')}>Tolak</button></div>
             </div>
           )}
           {f.category !== 'observasi' && (
             <div className="d-flex gap-2 align-items-end flex-wrap">
               <div><label className="form-label" htmlFor={`due${f.id}`}>Tenggat</label><input id={`due${f.id}`} type="date" className="form-control" value={due} onChange={(e) => setDue(e.target.value)} /></div>
-              <button className="btn btn-outline-secondary" disabled={busy || due === f.due_date} onClick={() => run('ubah', { due_date: due })}>Simpan tenggat</button>
+              <button className="btn btn-outline-secondary" disabled={busy || due === f.due_date} onClick={() => run('ubah', { due_date: due })}>Simpan Tenggat</button>
             </div>
           )}
-          <div><label className="form-label" htmlFor="fr-note">Catatan untuk pelanggan <span className="fw-normal text-muted2">(wajib untuk minta perbaikan ulang)</span></label><textarea id="fr-note" className="form-control" rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></div>
+          <div><label className="form-label" htmlFor="fr-note">Catatan untuk Pelanggan <span className="fw-normal text-muted2">(wajib untuk minta perbaikan ulang)</span></label><textarea id="fr-note" className="form-control" rows={2} value={note} onChange={(e) => setNote(e.target.value)} /></div>
         </div>
       )}
     </Sheet>

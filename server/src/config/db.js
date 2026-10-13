@@ -9,6 +9,7 @@ const pool = mysql.createPool({
   waitForConnections: true,
   connectionLimit: 10,
   dateStrings: true,
+  enableKeepAlive: true,
 });
 
 /** Jalankan query dengan prepared statement (aman dari SQL injection). */
@@ -21,4 +22,7 @@ async function one(sql, params = []) {
   return rows[0] || null;
 }
 
-module.exports = { pool, q, one };
+/** Tutup semua koneksi (dipakai saat server dimatikan/di-restart). */
+const end = () => pool.end().catch(() => {});
+
+module.exports = { q, one, end };
