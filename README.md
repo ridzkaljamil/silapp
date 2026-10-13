@@ -7,19 +7,10 @@ SILAPP digunakan pelanggan untuk mengajukan layanan dan memantau status pengajua
 ## Fitur
 
 - **Publik:** lacak status pengajuan dengan kode lacak (tanpa login) dan informasi layanan beserta ruang lingkupnya.
-- **Pelanggan:** mengajukan layanan (draft tersimpan otomatis), mengunduh template dokumen, membatalkan pengajuan yang belum diproses lalu mengajukan ulang, mengunggah dokumen dan bukti bayar, mengunduh invoice PDF, membalas permintaan tindakan atau temuan, mengunduh sertifikat/LHU, mengisi survei kepuasan, dan melihat Directory sertifikat.
-- **Admin:** antrean pengajuan per bidang, persetujuan tiap tahap, invoice PDF format PSU (DPP nilai lain, PPN 12%, PPh 23 opsional) dan verifikasi pembayaran, riwayat per tahap, temuan audit, parameter uji lab, akun pelanggan, dan dashboard.
+- **Pelanggan:** mengajukan layanan, mengunduh template dokumen, membatalkan pengajuan yang belum diproses lalu mengajukan ulang, mengunggah dokumen dan bukti bayar, mengunduh invoice PDF, membalas permintaan tindakan atau temuan, mengunduh sertifikat/LHU, mengisi survei kepuasan, dan melihat Directory sertifikat.
+- **Admin:** antrean pengajuan per bidang, persetujuan tiap tahap, invoice, verifikasi pembayaran, riwayat per tahap, temuan audit, parameter uji lab, akun pelanggan, dan dashboard.
 - **Super Admin:** semua fitur Admin, ditambah pengguna internal, Kelola Layanan (detail & tahapan, form pengajuan, ruang lingkup & harga, identitas invoice dan kontak), template dokumen, survei, serta data sertifikat. Rekap survei kepuasan per layanan bisa diberi catatan tindak lanjut dan diekspor ke Excel/CSV.
-- Notifikasi di aplikasi (ikon lonceng) dan lewat email, pengaturan akun dengan foto profil, dan tampilan responsif untuk HP.
-
-Status tracking per layanan:
-
-| Layanan | Kode status |
-|---|---|
-| Sertifikasi Produk | ST-01 s.d. ST-10 |
-| Lab Kimia / Fisika / Mikrobiologi | LAB-01 s.d. LAB-07 |
-| Lembaga Sistem Manajemen Mutu (persiapan) | LSM-01 s.d. LSM-09 |
-| Lab Kalibrasi | KAL-01 s.d. KAL-09 |
+- Notifikasi di aplikasi dan lewat email, pengaturan akun dengan foto profil, dan tampilan responsif untuk HP.
 
 ## Teknologi
 
@@ -63,33 +54,11 @@ Kata sandi semua akun: `password123`
 
 Contoh kode lacak: `SLP26-X2KD4M7A`, `SLP26-C7WD2KPM`, `SLP26-9RTE3LQW`.
 
-Pelanggan tidak bisa mendaftar sendiri. Akunnya dibuat oleh Admin lewat menu **Akun pelanggan**, dan kata sandi sementara wajib diganti saat login pertama.
-
 ## Konfigurasi email
 
 Isi `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, dan `SMTP_PASS` di `server/.env`. Jika `SMTP_HOST` dikosongkan, email tidak dikirim dan isinya hanya ditampilkan di console server.
 
 Contoh memakai Gmail: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_USER=alamat@gmail.com`, dan `SMTP_PASS` diisi **App Password** (Akun Google → Keamanan → Verifikasi 2 Langkah → Sandi Aplikasi), bukan kata sandi Gmail biasa.
-
-## Invoice
-
-Invoice dibuat otomatis sebagai PDF dengan format PSU. Harga yang diisi Admin adalah harga sebelum pajak:
-
-| Baris | Rumus |
-|---|---|
-| DPP Nilai Lain | 11/12 × harga |
-| PPN 12% | 12% × DPP Nilai Lain (= 11% × harga) |
-| Total | harga + PPN |
-| PPh 23 (jika dipotong) | 2% × harga |
-| Grand Total (dibayar) | Total − PPh 23 |
-
-Aturan penagihan: **satu pengajuan = satu invoice**.
-
-- Sertifikasi + uji lab untuk produk yang sama → pelanggan memilih **Paket LSPro + Lab**: satu invoice berisi dua pekerjaan (biaya sertifikasi dan biaya uji laboratorium, jumlah sampel = jumlah merek). Halaman Ajukan menyarankan paket ini bila produknya ada di ruang lingkup lab PSU.
-- Beberapa merek dalam satu produk → tetap satu pengajuan.
-- Produk atau layanan berbeda → pengajuan terpisah, invoice terpisah.
-
-Nomor invoice berurutan per tahun (`001/KEU/PSU/X/2026`). Kop, NPWP, rekening, dan penanda tangan diatur di **Kelola Layanan → Pengaturan Umum**.
 
 ## Build dan deploy
 
