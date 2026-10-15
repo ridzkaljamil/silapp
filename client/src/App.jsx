@@ -43,7 +43,6 @@ export default function App() {
       <Route element={<PublicLayout />}>
         <Route index element={<Lacak />} />
         <Route path="layanan" element={<Layanan />} />
-        <Route path="directory" element={<Navigate to="/" replace />} />
       </Route>
       <Route element={<MinimalLayout />}>
         <Route path="ganti-sandi" element={<GantiSandi />} />
@@ -73,10 +72,6 @@ export default function App() {
       <Route path="admin" element={<AppLayout roles={['superadmin']} />}>
         <Route path="pengguna" element={<Pengguna />} />
         <Route path="layanan" element={<KelolaLayanan />} />
-        <Route path="master" element={<Navigate to="/admin/layanan?tab=tahapan" replace />} />
-        <Route path="form" element={<Navigate to="/admin/layanan?tab=form" replace />} />
-        <Route path="harga" element={<Navigate to="/admin/layanan?tab=ruang-lingkup" replace />} />
-        <Route path="ruang-lingkup" element={<Navigate to="/admin/layanan?tab=ruang-lingkup" replace />} />
         <Route path="survei" element={<Survei />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />

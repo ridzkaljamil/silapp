@@ -13,7 +13,7 @@ function needOf(a) {
   if (a.ext_requests > 0) return ['Perpanjangan Temuan', 'pill-progress', 'Tinjau', true];
   if (a.findings_review > 0) return ['Bukti Perbaikan', 'pill-progress', 'Tinjau', true];
   if (a.payment_status === 'menunggu') return ['Bukti Bayar Masuk', 'pill-action', 'Verifikasi', true];
-  if (a.payment_status === 'belum' && ['ST-03', 'LAB-03', 'KAL-02'].includes(a.current_step.code)) return ['Invoice Belum Terbit', 'pill-action', 'Terbitkan Invoice', true];
+  if (a.payment_status === 'belum' && ['ST-03', 'LAB-03', 'KAL-02'].includes(a.current_step.code)) return ['Proforma Invoice Belum Terbit', 'pill-action', 'Terbitkan Proforma Invoice', true];
   return ['Pengajuan Baru', 'pill-progress', 'Periksa', false];
 }
 
@@ -114,7 +114,7 @@ export default function Dashboard() {
 
       <div className="kpi-grid mb-4">
         <Kpi tone="kpi-amber" icon="file-earmark-text" label="Pengajuan Berjalan" value={<CountUp value={s.running} />} sub={groups || 'Belum ada pengajuan berjalan'} to="/admin/antrean?status=berjalan" />
-        <Kpi tone="kpi-blue" icon="clock-history" label="Perlu Tindakan PSU" value={<CountUp value={d.need_action.length} />} sub="Invoice, verifikasi, pengajuan baru" to="/admin/antrean" />
+        <Kpi tone="kpi-blue" icon="clock-history" label="Perlu Tindakan PSU" value={<CountUp value={d.need_action.length} />} sub="Proforma invoice, verifikasi, pengajuan baru" to="/admin/antrean" />
         <Kpi tone="kpi-green" icon="journal-check" label="Temuan Terbuka" value={<CountUp value={s.findings_open} />} sub={s.findings_nearest ? `Tenggat terdekat ${fmtDate(s.findings_nearest)}` : 'Tidak ada tenggat aktif'} to="/admin/antrean" />
         <Kpi tone="kpi-red" icon="emoji-smile" label="Kepuasan Pelanggan" value={s.survey_avg === null ? '—' : <>{String(s.survey_avg).replace('.', ',')}<small className="kpi-of"> / 5</small></>}
           sub={s.survey_n ? `Dari ${s.survey_n} responden` : 'Belum ada responden'} to={superadmin ? '/admin/survei' : undefined} />

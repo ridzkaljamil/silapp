@@ -115,6 +115,7 @@ function ScopeList({ tab }) {
         </section>
       )}
       <FormSheet open={!!edit} onClose={() => setEdit(null)} onSubmit={save} busy={busy} icon={edit?.id ? 'pencil-square' : 'plus-square'}
+        confirm={() => ({ title: edit?.id ? 'Simpan Perubahan?' : 'Tambah Ruang Lingkup?', body: <><b>{edit?.name || 'Data ini'}</b> akan disimpan ke ruang lingkup {label}.</> })}
         title={edit?.id ? `Ubah · ${edit.name}` : `Tambah Ruang Lingkup · ${label}`} submitLabel={edit?.id ? 'Simpan' : 'Tambah'}
         sub={edit && !edit.id ? 'Langsung tampil di halaman Layanan dan bisa dipilih pelanggan.' : null}>
         {edit && (

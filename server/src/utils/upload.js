@@ -8,10 +8,20 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const ALLOWED = ['.pdf', '.doc', '.docx', '.zip', '.jpg', '.jpeg', '.png'];
 
+/**
+ * Multer membaca nama file sebagai latin1, sehingga huruf non-ASCII (mis. "–", "é") menjadi rusak saat diunduh lagi.
+ * Ubah ke UTF-8 bila hasilnya valid.
+ */
+function fixName(file) {
+  const utf = Buffer.from(file.originalname, 'latin1').toString('utf8');
+  if (!utf.includes('\uFFFD')) file.originalname = utf;
+  file.originalname = file.originalname.slice(-200);
+}
+
 const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
-    filename: (req, file, cb) => cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname).toLowerCase()}`),
+    filename: (req, file, cb) => { fixName(file); cb(null, `${Date.now()}-${crypto.randomBytes(6).toString('hex')}${path.extname(file.originalname).toLowerCase()}`); },
   }),
   limits: { fileSize: 10 * 1024 * 1024 }, // maks. 10 MB per file
   fileFilter: (req, file, cb) => {
@@ -33,4 +43,4 @@ function cleanupOnError(req, res, next) {
   next();
 }
 
-module.exports = { upload, UPLOAD_DIR, cleanupOnError };
+module.exports = { upload, UPLOAD_DIR, cleanupOnError, fixName };

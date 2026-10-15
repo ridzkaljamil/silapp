@@ -10,7 +10,7 @@ const INVOICE_FIELDS = [
   { key: 'company_npwp', label: 'NPWP Perusahaan' },
   { key: 'company_address', label: 'Alamat Perusahaan', type: 'textarea', wide: true },
   { key: 'company_phone', label: 'Telepon Kantor', hint: 'Kosongkan untuk memakai nomor WhatsApp di atas.' },
-  { key: 'invoice_code', label: 'Kode di Nomor Invoice', required: true, hint: 'Contoh PSU → 001/KEU/PSU/X/2026', show: (v) => `001/KEU/${v}/…` },
+  { key: 'invoice_code', label: 'Kode di Nomor Invoice', required: true, hint: 'Contoh PSU → 001/PSU/KIM/X/2026 (urut/kode perusahaan/kode layanan/bulan/tahun, urutan per layanan)', show: (v) => `001/${v}/KIM/…` },
   { key: 'invoice_due_days', label: 'Jatuh Tempo Default (Hari)', type: 'number', show: (v) => `${v} hari setelah invoice terbit` },
   { key: 'bank_name', label: 'Nama Bank' },
   { key: 'bank_city', label: 'Kota Bank' },
@@ -34,7 +34,7 @@ export default function PengaturanUmum() {
       {!inv ? <Loading /> : (
         <>
           {missing > 0 && <div className="alert alert-warning small">Lengkapi alamat, NPWP, rekening bank, dan penanda tangan agar invoice yang dicetak lengkap.</div>}
-          <EditPanel title="Identitas Invoice" sub="Kop, detail pembayaran, dan tanda tangan di invoice PDF." okText="Identitas invoice disimpan."
+          <EditPanel title="Identitas Proforma Invoice" sub="Kop, detail pembayaran, dan tanda tangan di proforma invoice PDF." okText="Identitas proforma invoice disimpan."
             fields={INVOICE_FIELDS} value={inv} onSave={async (v) => setInv((await api.put('/superadmin/invoice-settings', v)).data)} />
         </>
       )}

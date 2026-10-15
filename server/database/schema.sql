@@ -23,9 +23,10 @@ CREATE TABLE users (
   jabatan       VARCHAR(80)  NULL,
   bidang        ENUM('SP','LAB','KAL') NULL,
   company_name  VARCHAR(160) NULL,
-  nib_npwp      VARCHAR(40)  NULL,
+  nib           VARCHAR(20)  NULL,                    -- Nomor Induk Berusaha (13 digit)
+  npwp          VARCHAR(25)  NULL,                    -- NPWP perusahaan (15/16 digit)
   phone         VARCHAR(30)  NULL,
-  address       VARCHAR(255) NULL,
+  address       VARCHAR(255) NULL,                    -- alamat perusahaan sesuai NPWP
   avatar        VARCHAR(255) NULL,                    -- nama file foto profil di uploads/
   is_active     TINYINT(1) NOT NULL DEFAULT 1,
   must_change_password TINYINT(1) NOT NULL DEFAULT 0,   -- akun dibuat Admin: wajib ganti sandi saat login pertama
@@ -62,7 +63,8 @@ CREATE TABLE service_steps (
   is_payment_step     TINYINT(1) NOT NULL DEFAULT 0,
   is_certificate_step TINYINT(1) NOT NULL DEFAULT 0,
   sla_days            INT NULL,
-  UNIQUE KEY uq_step (service_id, step_order),
+  flow                VARCHAR(10) NOT NULL DEFAULT '',  -- '' = alur utama; '1B' = alur khusus skema Tipe 1b (SP)
+  UNIQUE KEY uq_step (service_id, flow, step_order),
   CONSTRAINT fk_steps_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
@@ -80,6 +82,7 @@ CREATE TABLE products (
   package_price_alt DECIMAL(14,2) NULL,  -- harga paket opsi kedua: Ekspress (Kimia) / Luar Negeri (Fisika)
   alt_available    TINYINT(1) NOT NULL DEFAULT 1,  -- 0 = opsi kedua belum tersedia (mis. Ekspress, ada parameter subkon)
   note             VARCHAR(255) NULL,
+  custom_name      TINYINT(1) NOT NULL DEFAULT 0,  -- 1 = pelanggan menulis nama produk & parameter sendiri (di luar lingkup KAN)
   CONSTRAINT fk_products_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
@@ -104,6 +107,7 @@ CREATE TABLE applications (
   product_id         INT NULL,
   product_label      VARCHAR(255) NOT NULL,
   current_step_order INT NOT NULL DEFAULT 1,
+  flow               VARCHAR(10) NOT NULL DEFAULT '',   -- alur tahapan yang dipakai ('1B' = Tipe 1b)
   status             ENUM('aktif','aksi','ditolak','selesai','batal') NOT NULL DEFAULT 'aktif',  -- batal = dibatalkan pelanggan
   application_type   VARCHAR(120) NULL,                 -- bisa lebih dari satu, dipisah koma (mis. Sertifikasi Awal, Surveillance)
   scheme             VARCHAR(20) NULL,
@@ -112,6 +116,7 @@ CREATE TABLE applications (
   nc_flag            TINYINT(1) NOT NULL DEFAULT 0,
   is_package         TINYINT(1) NOT NULL DEFAULT 0,      -- paket Sertifikasi Produk + Pengujian Lab
   full_sni           TINYINT(1) NOT NULL DEFAULT 0,      -- Lab: parameter lengkap sesuai SNI (harga paket)
+  package_snapshot   DECIMAL(14,2) NULL,                 -- harga paket per sampel saat diajukan (perubahan daftar harga tidak memengaruhi)
   price_option       ENUM('std','alt') NOT NULL DEFAULT 'std', -- Lab: Reguler/Dalam Negeri (std) atau Ekspress/Luar Negeri (alt)
   payment_status     ENUM('belum','invoice','menunggu','terverifikasi') NOT NULL DEFAULT 'belum',
   docs_downloaded_at DATETIME(3) NULL,                      -- Super Admin mengunduh semua berkas (ZIP)
@@ -135,7 +140,7 @@ CREATE TABLE application_details (
   application_id INT NOT NULL,
   field_key      VARCHAR(60) NOT NULL,
   field_label    VARCHAR(120) NOT NULL,
-  field_value    VARCHAR(500) NULL,
+  field_value    TEXT NULL,
   CONSTRAINT fk_det_app FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
 
@@ -206,7 +211,7 @@ CREATE TABLE payments (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   application_id INT NOT NULL,
   invoice_no     VARCHAR(40) NOT NULL,
-  invoice_seq    INT NULL,                    -- nomor urut per tahun (001/KEU/PSU/X/2026)
+  invoice_seq    INT NULL,                    -- nomor urut per layanan per tahun (001/PSU/KIM/X/2026)
   invoice_year   INT NULL,
   amount         DECIMAL(14,2) NULL,          -- grand total yang dibayar (harga + PPN − PPh 23)
   dpp            DECIMAL(14,2) NULL,          -- harga pekerjaan (belum PPN)
@@ -273,7 +278,10 @@ CREATE TABLE findings (
   status           ENUM('terbuka','dikirim','ditutup') NOT NULL DEFAULT 'terbuka',
   extension_status ENUM('tidak','diajukan','disetujui','ditolak') NOT NULL DEFAULT 'tidak',
   extension_reason VARCHAR(500) NULL,
-  customer_note    TEXT NULL,
+  customer_note    TEXT NULL,                          -- keterangan tambahan dari pelanggan
+  correction       TEXT NULL,                          -- bukti perbaikan: koreksi
+  root_cause       TEXT NULL,                          -- akar penyebab masalah
+  corrective_action TEXT NULL,                         -- tindakan korektif untuk mencegah pengulangan
   admin_note       TEXT NULL,
   created_by       INT NULL,
   closed_at        DATETIME NULL,
@@ -287,10 +295,11 @@ CREATE TABLE service_fields (
   service_id  INT NOT NULL,
   field_key   VARCHAR(60) NOT NULL,
   label       VARCHAR(120) NOT NULL,
-  type        ENUM('text','number','textarea','select','date') NOT NULL DEFAULT 'text',
+  type        ENUM('text','number','textarea','select','date','nomor_tanggal') NOT NULL DEFAULT 'text',  -- nomor_tanggal = pasangan Nomor + Tanggal
   options     VARCHAR(500) NULL,      -- untuk tipe select, dipisah koma
   required    TINYINT(1) NOT NULL DEFAULT 0,
   show_when   VARCHAR(20) NULL,       -- '1B' = hanya untuk skema Tipe 1B
+  multiple    TINYINT(1) NOT NULL DEFAULT 0,  -- nomor_tanggal: pelanggan boleh menambah lebih dari satu baris
   sort_order  INT NOT NULL DEFAULT 0,
   is_active   TINYINT(1) NOT NULL DEFAULT 1,
   UNIQUE KEY uq_field (service_id, field_key),
@@ -305,6 +314,7 @@ CREATE TABLE service_documents (
   required        TINYINT(1) NOT NULL DEFAULT 0,
   admin_if_package TINYINT(1) NOT NULL DEFAULT 0,  -- paket LSPro + Lab: diunggah Admin, pelanggan opsional
   show_when       VARCHAR(10) NULL,                 -- SURV: hanya diminta jika pelanggan mencentang Surveillance
+  hide_schemes    VARCHAR(160) NULL,                -- tipe skema yang tidak memerlukan berkas ini, dipisah koma (mis. Tipe 1b)
   sort_order      INT NOT NULL DEFAULT 0,
   is_active       TINYINT(1) NOT NULL DEFAULT 1,
   CONSTRAINT fk_sd_service FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE

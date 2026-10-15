@@ -56,6 +56,7 @@ export default function DataSertifikat() {
         <button className="btn btn-primary" onClick={() => setForm({ ...LEG })}><i className="bi bi-plus-lg" />Tambah Proyek Lama</button>
       </PageHead>
       <FormSheet open={!!form} onClose={() => setForm(null)} onSubmit={save} busy={busy} wide icon="patch-plus"
+        confirm={() => ({ title: 'Simpan Data Sertifikat?', body: <>Sertifikat <b>{form?.certificate_no || 'ini'}</b> akan disimpan dan tampil di Directory.</> })}
         title={form?.id ? 'Ubah Proyek Lama' : 'Tambah Proyek Sebelum SILAPP'} sub="Sertifikat yang terbit sebelum SILAPP dipakai, agar tetap tampil di Directory.">
         {form && (
           <div className="row g-3">

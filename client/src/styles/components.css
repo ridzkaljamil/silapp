@@ -45,7 +45,7 @@ a.panel:hover { box-shadow: var(--shadow-hover); }
 .steps-list li.done { color: var(--text); }
 .steps-list li.done .dot { background: var(--navy); color: #fff; }
 .steps-list li.current, .steps-list li.action { color: var(--navy); font-weight: 700; }
-.steps-list li.current .dot { background: var(--gold); color: var(--navy); }
+.steps-list li.current .dot { background: var(--ok-dot); color: #fff; }
 .steps-list li.action .dot { background: #E8890C; color: #fff; }
 .steps-list li.skipped { opacity: .55; }
 .steps-list li.skipped .dot { background: none; border: 1.5px dashed #98A2B3; }
@@ -179,6 +179,17 @@ a.panel:hover { box-shadow: var(--shadow-hover); }
 .m-dl { grid-template-columns: 110px 1fr; font-size: 14px; }
 
 /* dialog konfirmasi & pop-up (Sheet): modal di desktop, lembar dari bawah di HP */
+/* lapisan "Sedang memproses…" (BusyOverlay) */
+.busy-overlay { position: fixed; inset: 0; z-index: 1090; background: rgba(15,23,42,.38); display: grid; place-items: center; padding: 16px; animation: fadeIn .18s ease both; cursor: progress; }
+.busy-overlay.leaving { animation: fadeOut .18s ease both; }
+.busy-card { background: #fff; border-radius: 14px; padding: 22px 26px; min-width: 260px; max-width: 340px; text-align: center; display: grid; justify-items: center; gap: 8px; box-shadow: 0 24px 60px rgba(15,23,42,.28); animation: popIn .2s ease both; }
+.busy-spin { width: 38px; height: 38px; border-radius: 50%; border: 3px solid var(--line); border-top-color: var(--navy); border-right-color: var(--gold); animation: busySpin .8s linear infinite; margin-bottom: 4px; }
+.busy-bar { width: 100%; height: 6px; border-radius: 99px; background: var(--line-2); overflow: hidden; }
+.busy-bar i { display: block; height: 100%; background: var(--navy); border-radius: inherit; transition: width .2s ease; }
+@keyframes busySpin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .busy-spin { animation-duration: 2s; } }
+/* dialog konfirmasi selalu di atas pop-up form (Sheet) yang memanggilnya */
+.ui-modal.ui-confirm { z-index: 1075; }
 .ui-modal { position: fixed; inset: 0; z-index: 1060; background: rgba(15,23,42,.45); display: grid; place-items: center; padding: 16px; }
 .ui-modal-card { background: #fff; border-radius: 14px; width: 100%; max-width: 440px; padding: 24px; box-shadow: 0 24px 60px rgba(15,23,42,.28); }
 .ui-modal-ic { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; font-size: 20px; background: var(--chip); color: var(--navy); margin-bottom: 14px; }
@@ -218,6 +229,13 @@ a.panel:hover { box-shadow: var(--shadow-hover); }
 .file-drop b { display: block; font-size: 13.5px; color: var(--navy); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .file-drop small { display: block; font-size: 12px; color: var(--muted); }
 .file-drop.has { border-style: solid; border-color: #ABEFC6; background: #F6FEF9; } .file-drop.has > i { color: var(--ok); }
+.file-list { list-style: none; margin: 8px 0 0; padding: 0; display: grid; gap: 6px; }
+.file-list li { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 6px 6px 6px 10px; background: #fff; animation: fadeUp .18s ease both; }
+.file-list li > i { color: var(--navy-2); font-size: 16px; flex: none; }
+.file-list .file-name { display: block; font-size: 13px; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.file-list small { display: block; font-size: 11.5px; color: var(--muted); }
+.file-x { flex: none; width: 32px; height: 32px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; }
+.file-x:hover, .file-x:focus-visible { background: var(--bad-bg); color: var(--bad); }
 
 /* dropdown kustom (Select) */
 .sel { position: relative; width: 100%; }
@@ -290,7 +308,7 @@ a.panel:hover { box-shadow: var(--shadow-hover); }
 .tr-legend { display: flex; gap: 6px 16px; flex-wrap: wrap; font-size: 12.5px; color: var(--muted); }
 .tr-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .tr-legend i { width: 12px; height: 12px; border-radius: 99px; box-sizing: border-box; }
-.lg-done { background: var(--navy); } .lg-now { background: var(--gold); } .lg-act { background: #F59E0B; } .lg-opt { border: 1.5px dashed #CBD5E1; }
+.lg-done { background: var(--navy); } .lg-now { background: var(--ok-dot); } .lg-act { background: #F59E0B; } .lg-opt { border: 1.5px dashed #CBD5E1; }
 /* garis waktu vertikal (Lihat Semua Tahap) */
 .steps-v { list-style: none; margin: 0; padding: 4px 0; display: flex; flex-direction: column; }
 .steps-v .tr-step { flex-direction: row; align-items: flex-start; text-align: left; gap: 14px; padding-bottom: 18px; }
@@ -326,3 +344,8 @@ a.panel:hover { box-shadow: var(--shadow-hover); }
 @media (max-width: 575px) { .dl-grid.dl-wide { grid-template-columns: 1fr; row-gap: 2px; } .dl-grid.dl-wide dd { margin-bottom: 8px; } }
 .price-row.single, .price-head.single { grid-template-columns: 22px minmax(0, 1.4fr) minmax(0, 1.2fr) 130px 34px; }
 @media (max-width: 767px) { .price-row.single { grid-template-columns: 22px 1fr 34px; grid-template-areas: "no name del" ". method ." ". p1 ."; } }
+/* bukti perbaikan temuan: koreksi, akar penyebab, tindakan korektif */
+.f-answer { display: grid; gap: 6px; margin: 6px 0 0; }
+.f-answer dt { font-weight: 600; color: var(--text-2); font-size: 12px; }
+.f-answer dd { margin: 0; white-space: pre-line; color: var(--text); }
+.flow-h th { background: var(--line-2); color: var(--navy); font-size: 12.5px; padding-top: 8px; padding-bottom: 8px; }

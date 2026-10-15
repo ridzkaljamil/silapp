@@ -5,14 +5,14 @@
  */
 import { useEffect, useState, useCallback } from 'react';
 import api, { errMsg } from '../../../api';
-import { Loading, useToast, useConfirm, rupiah, MobileList, FormSheet, DataToolbar, matchText } from '../../../components/ui';
+import { Loading, useToast, useConfirm, rupiah, MobileList, FormSheet, DataToolbar, matchText, MoneyInput } from '../../../components/ui';
 import { PRICE_OPTIONS } from '../../../lib/constants';
 
 const money = (v) => (v === null || v === undefined || v === '' ? <span className="text-muted2">Belum Ada Harga</span> : rupiah(v));
 const optsOf = (code) => PRICE_OPTIONS[code] || ['Harga', null];
 const missing = (p) => p.parameters.filter((x) => x.price === null).length;
 const NEWP = () => ({ key: Math.random().toString(36).slice(2), name: '', method: '', price: '', price_alt: '' });
-const blank = (code) => ({ service_code: code, name: '', standard_no: '', package_price: '', package_price_alt: '', alt_available: true, note: '', parameters: [NEWP()] });
+const blank = (code) => ({ service_code: code, name: '', standard_no: '', package_price: '', package_price_alt: '', alt_available: true, note: '', custom_name: false, parameters: [NEWP()] });
 
 /** Isi pop-up tambah/ubah produk beserta harga parameternya. */
 function PriceForm({ f, setF }) {
@@ -27,10 +27,11 @@ function PriceForm({ f, setF }) {
       <div className="row g-3">
         <div className="col-md-8"><label className="form-label" htmlFor="hp-nm">Nama Produk</label><input id="hp-nm" className="form-control" placeholder="Contoh: Pupuk SP-36" value={f.name} onChange={set('name')} required /></div>
         <div className="col-md-4"><label className="form-label" htmlFor="hp-sni">Nomor SNI</label><input id="hp-sni" className="form-control" placeholder="SNI 02-3769-2005" value={f.standard_no || ''} onChange={set('standard_no')} /></div>
-        <div className="col-md-4"><label className="form-label" htmlFor="hp-pk">Paket Lengkap · {o1}</label><div className="input-group"><span className="input-group-text">Rp</span><input id="hp-pk" type="number" min={0} className="form-control" value={f.package_price ?? ''} onChange={set('package_price')} /></div></div>
-        {o2 && <div className="col-md-4"><label className="form-label" htmlFor="hp-pk2">Paket Lengkap · {o2}</label><div className="input-group"><span className="input-group-text">Rp</span><input id="hp-pk2" type="number" min={0} className="form-control" value={f.package_price_alt ?? ''} onChange={set('package_price_alt')} disabled={!f.alt_available} /></div></div>}
+        <div className="col-md-4"><label className="form-label" htmlFor="hp-pk">Paket Lengkap · {o1}</label><MoneyInput id="hp-pk" value={f.package_price} onChange={(v) => setF({ ...f, package_price: v })} /></div>
+        {o2 && <div className="col-md-4"><label className="form-label" htmlFor="hp-pk2">Paket Lengkap · {o2}</label><MoneyInput id="hp-pk2" value={f.package_price_alt} onChange={(v) => setF({ ...f, package_price_alt: v })} disabled={!f.alt_available} /></div>}
         {o2 && <div className="col-md-4 d-flex align-items-end"><div className="form-check mb-2"><input className="form-check-input" type="checkbox" id="hp-alt" checked={f.alt_available} onChange={set('alt_available')} /><label className="form-check-label" htmlFor="hp-alt">Opsi {o2} tersedia</label></div></div>}
         <div className="col-12"><label className="form-label" htmlFor="hp-nt">Keterangan <span className="fw-normal text-muted2">(opsional)</span></label><input id="hp-nt" className="form-control" value={f.note || ''} onChange={set('note')} /></div>
+        <div className="col-12"><div className="form-check"><input className="form-check-input" type="checkbox" id="hp-cn" checked={!!f.custom_name} onChange={set('custom_name')} /><label className="form-check-label" htmlFor="hp-cn">Di luar lingkup akreditasi KAN: pelanggan menulis nama produk dan parameternya sendiri</label></div></div>
       </div>
       <div className="form-text mt-0">Semua harga belum termasuk PPN. Kosongkan harga yang belum ditetapkan (tampil "Belum Ada Harga" bagi pelanggan).{f.service_code === 'KIM' && ` Jika harga ${o2} dikosongkan, dipakai harga ${o1} dan biaya tambahannya diisi Admin di invoice.`}</div>
       <div>
@@ -42,8 +43,8 @@ function PriceForm({ f, setF }) {
               <span className="num text-muted2 pr-no">{n + 1}</span>
               <input className="form-control form-control-sm pr-name" placeholder="Nama parameter" aria-label={`Nama parameter ${n + 1}`} value={p.name} onChange={(e) => setP(i, 'name', e.target.value)} required />
               <input className="form-control form-control-sm pr-method" placeholder="Metode (opsional)" aria-label={`Metode parameter ${n + 1}`} value={p.method || ''} onChange={(e) => setP(i, 'method', e.target.value)} />
-              <input type="number" min={0} className="form-control form-control-sm pr-p1" placeholder={o1} aria-label={`Harga ${o1} parameter ${n + 1}`} value={p.price ?? ''} onChange={(e) => setP(i, 'price', e.target.value)} />
-              {o2 && <input type="number" min={0} className="form-control form-control-sm pr-p2" placeholder={o2} aria-label={`Harga ${o2} parameter ${n + 1}`} value={p.price_alt ?? ''} onChange={(e) => setP(i, 'price_alt', e.target.value)} disabled={!f.alt_available} />}
+              <MoneyInput size="sm" prefix={false} className="pr-p1" placeholder={o1} aria-label={`Harga ${o1} parameter ${n + 1}`} value={p.price} onChange={(v) => setP(i, 'price', v)} />
+              {o2 && <MoneyInput size="sm" prefix={false} className="pr-p2" placeholder={o2} aria-label={`Harga ${o2} parameter ${n + 1}`} value={p.price_alt} onChange={(v) => setP(i, 'price_alt', v)} disabled={!f.alt_available} />}
               <button type="button" className="btn btn-sm btn-outline-danger pr-del" aria-label={`Hapus parameter ${n + 1}`} onClick={() => remove(p, i)}><i className="bi bi-x-lg" /></button>
             </div>
           ))}
@@ -130,6 +131,7 @@ export default function LabScope({ code, name }) {
             </div>
       </section>
       <FormSheet open={!!edit} onClose={() => setEdit(null)} onSubmit={save} busy={busy} wide="xl" icon={edit?.id ? 'tags' : 'plus-square'}
+        confirm={() => ({ title: edit?.id ? 'Simpan Perubahan?' : 'Tambah Produk?', body: <>Data harga <b>{edit?.name || 'produk ini'}</b> akan disimpan dan langsung dipakai di form pengajuan.</> })}
         title={edit?.id ? `Ubah · ${edit.name}` : `Tambah Produk · ${name}`} submitLabel={edit?.id ? 'Simpan' : 'Tambah Produk'}
         sub={edit && (edit.id ? name : 'Produk baru langsung bisa dipilih pelanggan saat mengajukan.')}>
         {edit && <PriceForm f={edit} setF={setEdit} />}

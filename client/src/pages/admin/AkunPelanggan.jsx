@@ -4,7 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import api, { errMsg } from '../../api';
 import { Paged, PageHead, Loading, useToast, useConfirm, MobileList, initials, FormSheet, Sheet, DataToolbar, matchText } from '../../components/ui';
 
-const CUST = { id: null, name: '', email: '', company_name: '', nib_npwp: '', phone: '', address: '', is_active: true };
+const CUST = { id: null, name: '', email: '', company_name: '', nib: '', npwp: '', phone: '', address: '', is_active: true };
 
 export default function AkunPelanggan() {
   const toast = useToast();
@@ -37,11 +37,13 @@ export default function AkunPelanggan() {
     try { const r = await api.post(`/customers/${u.id}/reset-password`); setCreated({ email: u.email, company: u.company_name, pass: r.data.temp_password, reset: true }); } catch (ex) { toast(errMsg(ex), 'danger'); }
   };
   const stateOf = (u) => (!u.is_active ? 'nonaktif' : u.must_change_password ? 'baru' : 'aktif');
-  const list = rows.filter((r) => matchText(q, r.name, r.email, r.company_name, r.phone, r.nib_npwp) && (!flt.status || stateOf(r) === flt.status));
+  const list = rows.filter((r) => matchText(q, r.name, r.email, r.company_name, r.phone, r.nib, r.npwp) && (!flt.status || stateOf(r) === flt.status));
   const empty = rows.length ? 'Tidak ada pelanggan yang cocok dengan pencarian atau filter.' : 'Belum ada akun pelanggan.';
   const filters = [{ key: 'status', label: 'Status Akun', options: [['aktif', 'Aktif'], ['baru', 'Belum Login'], ['nonaktif', 'Nonaktif']] }];
   // semua data akun pelanggan wajib diisi; hanya Admin & Super Admin yang dapat mengubahnya
-  const fields = [['company_name', 'Nama Perusahaan', 'text', true], ['nib_npwp', 'NIB / NPWP', 'text', true], ['address', 'Alamat Perusahaan', 'textarea', true],
+  // [kunci, label, tipe, wajib, petunjuk, angka]
+  const fields = [['company_name', 'Nama Perusahaan', 'text', true], ['nib', 'NIB', 'text', true, '13 digit angka', true],
+    ['npwp', 'NPWP', 'text', true, '15 atau 16 digit angka', true], ['address', 'Alamat Perusahaan (Sesuai NPWP)', 'textarea', true],
     ['name', 'Nama Penanggung Jawab', 'text', true], ['email', 'Email (untuk Login)', 'email', true], ['phone', 'No. HP / WhatsApp', 'tel', true]];
   return (
     <>
@@ -64,15 +66,16 @@ export default function AkunPelanggan() {
         )}
       </Sheet>
       <FormSheet open={!!form} onClose={() => setForm(null)} onSubmit={save} busy={busy} wide icon={form?.id ? 'building-gear' : 'person-plus'}
+        confirm={() => (form?.id ? { title: 'Simpan Data Pelanggan?', body: <>Perubahan data <b>{form.company_name}</b> akan disimpan.</> } : { title: 'Buat Akun Pelanggan?', body: <>Akun untuk <b>{form?.company_name}</b> dibuat dan kata sandi sementara dikirim ke <b>{form?.email}</b>.</> })}
         title={form?.id ? 'Ubah Data Pelanggan' : 'Buat Akun Pelanggan'} submitLabel={form?.id ? 'Simpan' : 'Buat Akun & Kirim Email'}
         sub={form?.id ? form.company_name : 'Info login dan kata sandi sementara akan dikirim ke email di bawah.'}>
         {form && (
           <div className="row g-3">
-            {fields.map(([k, l, t, req]) => (
+            {fields.map(([k, l, t, req, hint, digits]) => (
               <div className={t === 'textarea' ? 'col-12' : 'col-md-6'} key={k}><label className="form-label" htmlFor={`c-${k}`}>{l}{req && <span className="text-danger"> *</span>}</label>
                 {t === 'textarea'
                   ? <textarea id={`c-${k}`} rows={2} className="form-control" value={form[k] || ''} onChange={set(k)} required={req} maxLength={255} />
-                  : <input id={`c-${k}`} type={t} className="form-control" value={form[k] || ''} onChange={set(k)} required={req} />}
+                  : <input id={`c-${k}`} type={t} className="form-control" value={form[k] || ''} onChange={set(k)} required={req} inputMode={digits ? 'numeric' : undefined} maxLength={digits ? 25 : undefined} placeholder={hint} />}
               </div>
             ))}
             {form.id && <div className="col-12"><div className="form-check"><input id="c-act" type="checkbox" className="form-check-input" checked={!!form.is_active} onChange={set('is_active')} /><label htmlFor="c-act" className="form-check-label">Akun Aktif</label></div></div>}
@@ -86,7 +89,7 @@ export default function AkunPelanggan() {
           key: u.id, avatar: initials(u.company_name || u.name), title: u.company_name, sub: `${u.name} · ${u.applications} pengajuan`, muted: !u.is_active,
           pills: [['pill-action', 'User'], !u.is_active ? ['pill-neutral', 'Nonaktif'] : u.must_change_password ? ['pill-progress', 'Belum Login'] : ['pill-done', 'Aktif']],
           detail: {
-            rows: [['Penanggung Jawab', u.name], ['Email', u.email], ['Telepon', u.phone || '—'], ['NIB / NPWP', u.nib_npwp], ['Alamat', u.address], ['Pengajuan', u.applications]],
+            rows: [['Penanggung Jawab', u.name], ['Email', u.email], ['Telepon', u.phone || '—'], ['NIB', u.nib || '—'], ['NPWP', u.npwp || '—'], ['Alamat (Sesuai NPWP)', u.address], ['Pengajuan', u.applications]],
             actions: [
               { label: 'Ubah', icon: 'pencil', onClick: () => { setForm({ ...CUST, ...u, is_active: !!u.is_active }); setCreated(null); } },
               { label: 'Reset Sandi', icon: 'key', onClick: () => reset(u) },
@@ -98,7 +101,7 @@ export default function AkunPelanggan() {
             <thead><tr><th>Perusahaan</th><th>Penanggung Jawab</th><th>Kontak</th><th>Pengajuan</th><th>Status</th><th></th></tr></thead>
             <tbody>{page.map((u) => (
               <tr key={u.id}>
-                <td>{u.company_name}<div className="small text-muted2">{u.nib_npwp || ''}</div></td>
+                <td>{u.company_name}<div className="small text-muted2">{[u.nib && `NIB ${u.nib}`, u.npwp && `NPWP ${u.npwp}`].filter(Boolean).join(' · ')}</div></td>
                 <td>{u.name}<div className="small text-muted2">{u.email}</div></td>
                 <td className="small">{u.phone || '—'}</td>
                 <td className="num">{u.applications}</td>

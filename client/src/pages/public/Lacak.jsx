@@ -113,7 +113,7 @@ export default function Lacak({ inApp = false }) {
             <SideDecoMini />
             <span className="pc-ic"><i className="bi bi-box-arrow-in-right" /></span>
             <b>{user ? 'Lanjutkan ke SILAPP' : 'Sudah Punya Akun?'}</b>
-            <span>{user ? 'Buka dashboard untuk melihat semua pengajuan Anda.' : 'Masuk untuk mengunggah dokumen, membayar invoice, dan mengunduh sertifikat. Akun dibuat oleh PSU setelah kesepakatan layanan.'}</span>
+            <span>{user ? 'Buka dashboard untuk melihat semua pengajuan Anda.' : 'Masuk untuk mengunggah dokumen, membayar tagihan, dan mengunduh sertifikat. Akun dibuat oleh PSU setelah kesepakatan layanan.'}</span>
             <span className="pc-go">{user ? 'Ke Dashboard →' : 'Masuk ke SILAPP →'}</span>
           </Link>
         </div>

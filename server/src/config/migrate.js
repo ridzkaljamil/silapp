@@ -12,6 +12,7 @@ const COLUMNS = [
   ['products', 'note', 'VARCHAR(255) NULL AFTER alt_available'],
   ['product_parameters', 'price_alt', 'DECIMAL(14,2) NULL AFTER price'],
   ['applications', 'price_option', "ENUM('std','alt') NOT NULL DEFAULT 'std' AFTER full_sni"],
+  ['applications', 'package_snapshot', 'DECIMAL(14,2) NULL AFTER full_sni'],
   // survei per layanan + identitas responden
   ['survey_questions', 'bidang', "ENUM('SP','LAB','KAL') NOT NULL DEFAULT 'SP' AFTER id"],
   ['survey_responses', 'bidang', "ENUM('SP','LAB','KAL') NOT NULL DEFAULT 'SP' AFTER user_id"],
@@ -31,6 +32,17 @@ const COLUMNS = [
   ['payments', 'total', 'DECIMAL(14,2) NULL AFTER ppn'],
   ['payments', 'pph23', 'DECIMAL(14,2) NOT NULL DEFAULT 0 AFTER total'],
   ['payments', 'with_pph23', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER pph23'],
+  // masukan demo PSU (Oktober 2026)
+  ['users', 'nib', 'VARCHAR(20) NULL AFTER company_name'],
+  ['users', 'npwp', 'VARCHAR(25) NULL AFTER nib'],
+  ['service_steps', 'flow', "VARCHAR(10) NOT NULL DEFAULT '' AFTER sla_days"],
+  ['applications', 'flow', "VARCHAR(10) NOT NULL DEFAULT '' AFTER current_step_order"],
+  ['products', 'custom_name', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER note'],
+  ['findings', 'correction', 'TEXT NULL AFTER customer_note'],
+  ['findings', 'root_cause', 'TEXT NULL AFTER correction'],
+  ['findings', 'corrective_action', 'TEXT NULL AFTER root_cause'],
+  ['service_fields', 'multiple', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER show_when'],
+  ['service_documents', 'hide_schemes', 'VARCHAR(160) NULL AFTER show_when'],
 ];
 
 /** Tabel yang ditambahkan setelah rilis awal. */
@@ -72,6 +84,29 @@ const TEMPLATES = [
   ['Surat Kesediaan Surveillance', 'Diperlukan jika Anda mencentang Surveillance pada jenis permohonan.', 'surat-kesediaan-surveillance.docx'],
   ['Surat Pernyataan Keaslian Dokumen', 'Pernyataan bahwa seluruh dokumen yang diunggah benar dan sah.', 'surat-pernyataan-keaslian-dokumen.docx'],
 ];
+/** Alur khusus skema Tipe 1b (SP): tanpa audit & tindakan perbaikan; tahap 5 Sampling, review + keputusan digabung. */
+const SP_1B = [['ST-01', 'Permohonan Diterima', 10, 0, 0], ['ST-02', 'Verifikasi & Tinjauan Permohonan', 20, 0, 0],
+  ['ST-03', 'Penawaran, Kontrak & Pembayaran', 30, 1, 0], ['ST-04', 'Penjadwalan & Penugasan', 40, 0, 0],
+  ['ST-05', 'Sampling', 50, 0, 0], ['ST-06', 'Pengujian Laboratorium', 65, 0, 0],
+  ['ST-07', 'Review & Keputusan', 85, 0, 0], ['ST-08', 'Sertifikat Terbit', 100, 0, 1]];
+/** Urutan alur utama (ST-01..ST-10) -> urutan alur Tipe 1b, untuk pengajuan 1b yang sudah berjalan. */
+const MAP_1B = { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 6, 8: 7, 9: 7, 10: 8 };
+/** Berkas SP yang tidak diperlukan untuk Tipe 1b (masukan demo PSU). */
+const NOT_1B = ['Surat Kesediaan Surveillance', 'Surat Pernyataan Keaslian Dokumen', 'Dokumen Sistem Mutu'];
+/** NIB 13 digit, NPWP 15/16 digit: pisahkan isian lama "NIB / NPWP". */
+function splitNibNpwp(raw) {
+  const groups = String(raw || '').match(/\d[\d.\-\s]*\d/g) || [];
+  let nib = null; let npwp = null;
+  for (const g of groups) {
+    const d = g.replace(/\D/g, '');
+    if (d.length === 13 && !nib) nib = d;
+    else if ((d.length === 15 || d.length === 16) && !npwp) npwp = d;
+  }
+  if (!nib && !npwp && String(raw || '').trim()) npwp = String(raw).trim().slice(0, 25);
+  return { nib, npwp };
+}
+const hasColumn = async (table, column) => !!(await one('SELECT 1 x FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME=?', [table, column]));
+
 const svcId = async (code) => (await one('SELECT id FROM services WHERE code=?', [code]))?.id;
 
 const ONCE = {
@@ -174,6 +209,74 @@ const ONCE = {
       else await q('INSERT INTO service_documents (service_id, name, required, admin_if_package, sort_order) VALUES (?,?,?,?,?)', [sp, name, req, pkg, i + 1]);
     }
   },
+  // akun pelanggan: kolom NIB dan NPWP dipisah
+  async nib_npwp() {
+    if (!(await hasColumn('users', 'nib_npwp'))) return;
+    const rows = await q("SELECT id, nib_npwp FROM users WHERE nib_npwp IS NOT NULL AND nib_npwp<>'' AND nib IS NULL AND npwp IS NULL");
+    for (const r of rows) {
+      const { nib, npwp } = splitNibNpwp(r.nib_npwp);
+      await q('UPDATE users SET nib=?, npwp=? WHERE id=?', [nib, npwp, r.id]);
+    }
+  },
+  // tahapan bisa punya lebih dari satu alur per layanan (alur utama + alur Tipe 1b)
+  async alur_tahapan() {
+    const idx = await q("SELECT COLUMN_NAME c FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='service_steps' AND INDEX_NAME='uq_step' ORDER BY SEQ_IN_INDEX");
+    if (!idx.some((x) => x.c === 'flow')) {
+      await q('ALTER TABLE service_steps DROP INDEX uq_step, ADD UNIQUE KEY uq_step (service_id, flow, step_order)');
+    }
+  },
+  async alur_1b() {
+    const sp = await svcId('SP');
+    if (!sp) return;
+    if (!(await one("SELECT id FROM service_steps WHERE service_id=? AND flow='1B' LIMIT 1", [sp]))) {
+      for (const [i, [code, name, pct, pay, cert]] of SP_1B.entries()) {
+        await q("INSERT INTO service_steps (service_id, step_order, status_code, name, progress_pct, is_optional, is_payment_step, is_certificate_step, flow) VALUES (?,?,?,?,?,0,?,?,'1B')",
+          [sp, i + 1, code, name, pct, pay, cert]);
+      }
+    }
+    // pengajuan Tipe 1b yang sudah ada dipindah ke alur barunya
+    const apps = (await q("SELECT id FROM applications WHERE service_id=? AND flow='' AND scheme LIKE '%1b%'", [sp])).map((r) => r.id);
+    if (!apps.length) return;
+    const caseOf = (col) => `CASE ${col} ${Object.entries(MAP_1B).map(([a, b]) => `WHEN ${a} THEN ${b}`).join(' ')} ELSE ${col} END`;
+    await q(`UPDATE applications SET current_step_order=${caseOf('current_step_order')}, flow='1B' WHERE id IN (?)`, [apps]);
+    await q(`UPDATE status_logs SET step_order=${caseOf('step_order')} WHERE application_id IN (?)`, [apps]);
+    await q(`UPDATE documents SET step_order=${caseOf('step_order')} WHERE application_id IN (?)`, [apps]);
+  },
+  async dokumen_1b() {
+    const sp = await svcId('SP');
+    if (sp) await q("UPDATE service_documents SET hide_schemes='Tipe 1b' WHERE service_id=? AND name IN (?) AND (hide_schemes IS NULL OR hide_schemes='')", [sp, NOT_1B]);
+  },
+  // isian Nomor + Tanggal (B/L, Packing List, Invoice) dan produk di luar lingkup KAN
+  async isian_nomor_tanggal() {
+    await q("ALTER TABLE service_fields MODIFY type ENUM('text','number','textarea','select','date','nomor_tanggal') NOT NULL DEFAULT 'text'");
+    await q(`UPDATE service_fields SET type='nomor_tanggal', multiple=1 WHERE type='text' AND service_id=?
+      AND (label LIKE '%Bill of Lading%' OR label LIKE '%Packing List%' OR label LIKE 'Nomor Invoice%')`, [await svcId('SP')]);
+  },
+  async produk_luar_lingkup() {
+    const { KIMIA_EXTRA_NOTE } = require('../../database/price-data');
+    await q("UPDATE products SET custom_name=1 WHERE name LIKE 'Parameter Tambahan di Luar Lingkup%'");
+    const fis = await svcId('FIS');
+    if (fis && !(await one("SELECT id FROM products WHERE service_id=? AND custom_name=1", [fis]))) {
+      await q("INSERT INTO products (service_id, category, name, note, custom_name) VALUES (?, 'Uji SNI', 'Parameter Tambahan di Luar Lingkup Akreditasi KAN', ?, 1)", [fis, KIMIA_EXTRA_NOTE]);
+    }
+  },
+  // identitas invoice resmi PSU: diisi bila masih kosong (yang sudah diisi Super Admin tidak ditimpa)
+  async identitas_invoice() {
+    const { INVOICE_IDENTITY } = require('../utils/settings');
+    for (const [k, v] of Object.entries(INVOICE_IDENTITY)) {
+      const cur = await one('SELECT svalue FROM settings WHERE skey=?', [k]);
+      if (!cur) await q('INSERT INTO settings (skey, svalue) VALUES (?,?)', [k, v]);
+      else if (!String(cur.svalue || '').trim() || (k === 'signer_title' && cur.svalue === 'Direktur Utama')) await q('UPDATE settings SET svalue=? WHERE skey=?', [v, k]);
+    }
+  },
+  // daftar brand/spesifikasi lab (hingga 50 baris) tidak muat di VARCHAR(500)
+  async detail_text() {
+    await q('ALTER TABLE application_details MODIFY field_value TEXT NULL');
+  },
+  // brand/spesifikasi lab kini isian khusus berbaris di form Ajukan (bukan isian form builder)
+  async hapus_isian_spesifikasi_lab() {
+    await q("DELETE FROM service_fields WHERE field_key='merek_spesifikasi'");
+  },
   async template_dokumen() {
     fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     for (const [i, [name, desc, file]] of TEMPLATES.entries()) {
@@ -181,6 +284,18 @@ const ONCE = {
       const stored = `template-${file}`;
       fs.copyFileSync(path.join(__dirname, '..', '..', 'database', 'templates', file), path.join(UPLOAD_DIR, stored));
       await q('INSERT INTO doc_templates (name, description, file_path, original_name, sort_order) VALUES (?,?,?,?,?)', [name, desc, stored, file, i]);
+    }
+  },
+  // template bawaan diganti versi berkop surat PSU dengan isian NIB dan NPWP terpisah
+  // (template yang sudah diganti Super Admin tidak disentuh)
+  async template_kop_nib_npwp() {
+    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    for (const [name, , file] of TEMPLATES) {
+      const stored = `template-${file}`;
+      const t = await one('SELECT id FROM doc_templates WHERE name=? AND file_path=?', [name, stored]);
+      if (!t) continue;
+      fs.copyFileSync(path.join(__dirname, '..', '..', 'database', 'templates', file), path.join(UPLOAD_DIR, stored));
+      await q('UPDATE doc_templates SET updated_at=NOW() WHERE id=?', [t.id]);
     }
   },
 };

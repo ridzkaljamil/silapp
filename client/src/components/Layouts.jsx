@@ -204,7 +204,7 @@ function NotificationBell() {
   useDismiss(ref, open, close);
   const go = async (n) => {
     setOpen(false);
-    if (!n.is_read) { setData((d) => ({ unread: Math.max(0, d.unread - 1), items: d.items.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)) })); api.post(`/notifications/${n.id}/read`).catch(() => {}); }
+    if (!n.is_read) { setData((d) => ({ unread: Math.max(0, d.unread - 1), items: d.items.map((x) => (x.id === n.id ? { ...x, is_read: true } : x)) })); api.post(`/notifications/${n.id}/read`, null, { silent: true }).catch(() => {}); }
     if (!n.link) return;
     // notifikasi untuk halaman yang sedang dibuka: muat ulang datanya, bukan sekadar pindah halaman
     if (n.link === loc.pathname + loc.search || n.link === loc.pathname) announce([n.link]);
@@ -212,7 +212,7 @@ function NotificationBell() {
   };
   const readAll = async () => {
     setData((d) => ({ unread: 0, items: d.items.map((x) => ({ ...x, is_read: true })) }));
-    await api.post('/notifications/read-all').catch(() => {});
+    await api.post('/notifications/read-all', null, { silent: true }).catch(() => {});
   };
   return (
     <div className="pm" ref={ref}>

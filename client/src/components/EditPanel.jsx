@@ -4,14 +4,16 @@
  */
 import { Fragment, useState } from 'react';
 import { errMsg } from '../api';
-import { useToast } from './feedback';
+import { useToast, useConfirm } from './feedback';
 
 export function EditPanel({ title, sub, fields, value, onSave, okText = 'Perubahan disimpan.' }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [form, setForm] = useState(null);
   const [busy, setBusy] = useState(false);
   const save = async (e) => {
     e.preventDefault();
+    if (busy || !(await confirm({ title: `Simpan ${title}?`, body: 'Perubahan langsung dipakai di aplikasi.', ok: 'Ya, Simpan', icon: 'floppy' }))) return;
     setBusy(true);
     try { await onSave(form); setForm(null); toast(okText); } catch (ex) { toast(errMsg(ex), 'danger'); } finally { setBusy(false); }
   };

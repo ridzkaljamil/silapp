@@ -53,6 +53,7 @@ export default function Pengguna() {
         <button className="btn btn-primary" onClick={() => setForm({ ...EMPTY, jabatan: (jab.SP || [])[0] || '' })}><i className="bi bi-plus-lg" />Tambah Pengguna</button>
       </PageHead>
       <FormSheet open={!!form} onClose={() => setForm(null)} onSubmit={save} busy={busy} wide icon={form?.id ? 'person-gear' : 'person-plus'}
+        confirm={() => ({ title: form?.id ? 'Simpan Perubahan Pengguna?' : 'Tambah Pengguna?', body: <>Akun <b>{form?.email}</b> akan {form?.id ? 'diperbarui' : 'dibuat dan langsung bisa dipakai masuk'}.</> })}
         title={form?.id ? 'Ubah Pengguna' : 'Tambah Pengguna'} sub={form?.id ? form.email : 'Akun baru langsung bisa dipakai untuk masuk.'}>
         {form && (
           <div className="row g-3">

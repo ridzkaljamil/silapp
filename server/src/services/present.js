@@ -22,7 +22,7 @@ function summary(app) {
     company_name: app.company_name, status: app.status, condition: condition(app),
     current_step: { order: app.current_step_order, code: st.status_code, name: st.name, index: app.steps.findIndex((x) => x.step_order === app.current_step_order) + 1, total: app.steps.length, is_payment_step: !!st.is_payment_step },
     progress: progress(app),
-    payment_status: app.payment_status, open_findings: +app.open_findings || 0, is_package: !!app.is_package,
+    payment_status: app.payment_status, open_findings: +app.open_findings || 0, is_package: !!app.is_package, flow: app.flow || '',
     created_at: app.created_at, updated_at: app.updated_at,
   };
 }
@@ -34,7 +34,7 @@ async function timeline(app) {
     let state = 'todo';
     if (isSkipped(app, s) && (s.step_order < app.current_step_order || app.service_code === 'KAL')) state = 'skipped';
     else if (app.status === 'selesai' || s.step_order < app.current_step_order) state = 'done';
-    else if (s.step_order === app.current_step_order) state = app.status === 'aksi' ? 'action' : app.status === 'ditolak' ? 'closed' : 'current';
+    else if (s.step_order === app.current_step_order) state = app.status === 'aksi' ? 'action' : ['ditolak', 'batal'].includes(app.status) ? 'closed' : 'current';
     return { order: s.step_order, code: s.status_code, name: s.name, pct: s.progress_pct, optional: !!s.is_optional, pay: !!s.is_payment_step, state, started_at: started[s.step_order] || null };
   });
 }
@@ -106,7 +106,10 @@ async function detail(app, viewer) {
     id: f.id, category: f.category, description: f.description, report_date: f.report_date, due_date: f.due_date,
     days_left: f.status === 'ditutup' ? null : daysLeft(f.due_date), status: f.status,
     extension_status: f.extension_status, extension_reason: f.extension_reason, customer_note: f.customer_note, admin_note: f.admin_note,
-    files: base.documents.filter((d) => d.finding_id === f.id),
+    correction: f.correction, root_cause: f.root_cause, corrective_action: f.corrective_action,
+    // bukti perbaikan dan lampiran pengajuan perpanjangan dipisah agar tampil di tempatnya masing-masing
+    files: base.documents.filter((d) => d.finding_id === f.id && !d.doc_type.startsWith('Lampiran Perpanjangan')),
+    extension_files: base.documents.filter((d) => d.finding_id === f.id && d.doc_type.startsWith('Lampiran Perpanjangan')),
   }));
 
   base.certificate = cert && { ...cert, has_file: !!cert.has_file };

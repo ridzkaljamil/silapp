@@ -2,11 +2,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import api, { errMsg, download } from '../../api';
 import { useAuth } from '../../AuthContext';
-import { PageHead, Loading, useToast, fmtDate } from '../../components/ui';
+import { PageHead, Loading, useToast, useConfirm, fmtDate } from '../../components/ui';
 
 export default function TemplateDokumen() {
   const { user } = useAuth();
   const toast = useToast();
+  const confirm = useConfirm();
   const [rows, setRows] = useState(null);
   const [busy, setBusy] = useState(null);
   const load = useCallback(() => api.get('/templates').then((r) => setRows(r.data)), []);
@@ -16,6 +17,7 @@ export default function TemplateDokumen() {
 
   const replace = async (t, file) => {
     if (!file) return;
+    if (!(await confirm({ title: 'Ganti Template?', body: <>Template <b>{t.name}</b> diganti dengan <b>{file.name}</b>. Pelanggan langsung mengunduh file baru ini.</>, ok: 'Ya, Ganti', icon: 'file-earmark-arrow-up' }))) return;
     const fd = new FormData();
     fd.append('file', file);
     setBusy(t.id);

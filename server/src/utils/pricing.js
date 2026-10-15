@@ -23,4 +23,14 @@ function taxes(price, withPph23 = false) {
   return { price: h, dppLain, ppn, total, pph23, grandTotal: total - pph23 };
 }
 
-module.exports = { PRICE_OPTIONS, optionLabel, taxes, PPN_LABEL };
+/**
+ * Nominal rupiah dari isian/JSON: angka atau teks angka standar ("500000", "500000.00" dari kolom DECIMAL)
+ * dibaca sebagai angka; teks lain diambil digitnya saja. Kosong / tanpa angka = null. Hasil dibulatkan, minimal 0.
+ */
+function parseMoney(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = typeof v === 'number' || /^\s*-?\d+(\.\d+)?\s*$/.test(v) ? Number(v) : Number(String(v).replace(/\D/g, '') || NaN);
+  return Number.isFinite(n) ? Math.max(0, Math.round(n)) : null;
+}
+
+module.exports = { PRICE_OPTIONS, optionLabel, taxes, PPN_LABEL, parseMoney };

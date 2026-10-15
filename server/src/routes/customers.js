@@ -21,14 +21,18 @@ function sendLogin(u, pass, reset) {
     `Alamat  : ${APP_URL()}/masuk\nEmail   : ${u.email}\nKata sandi sementara: ${pass}\n\nDemi keamanan, Anda wajib mengganti kata sandi saat pertama kali masuk.\n\nHormat kami,\nPT Penilai Standar Uji`);
 }
 
-const FIELDS = ['name', 'email', 'company_name', 'nib_npwp', 'phone', 'address'];
-const LABEL = { company_name: 'Nama Perusahaan', address: 'Alamat Perusahaan', nib_npwp: 'NIB / NPWP', name: 'Nama Penanggung Jawab', email: 'Email', phone: 'Nomor Telepon' };
+const FIELDS = ['name', 'email', 'company_name', 'nib', 'npwp', 'phone', 'address'];
+const LABEL = { company_name: 'Nama Perusahaan', nib: 'NIB', npwp: 'NPWP', address: 'Alamat Perusahaan (Sesuai NPWP)', name: 'Nama Penanggung Jawab', email: 'Email', phone: 'Nomor Telepon' };
+/** NIB / NPWP disimpan sebagai angka saja (titik, strip, spasi dibuang). */
+const digits = (v) => String(v ?? '').replace(/[\s.\-]/g, '');
 /** Semua data akun pelanggan wajib diisi. */
 function checkCustomer(b) {
   if (String(b.name ?? '').trim().length > 120 || String(b.company_name ?? '').trim().length > 160) return 'Nama terlalu panjang.';
-  for (const k of ['company_name', 'address', 'nib_npwp', 'name', 'email', 'phone']) {
+  for (const k of ['company_name', 'nib', 'npwp', 'address', 'name', 'email', 'phone']) {
     if (!String(b[k] ?? '').trim()) return `${LABEL[k]} wajib diisi.`;
   }
+  if (!/^\d{13}$/.test(b.nib)) return 'NIB harus 13 digit angka.';
+  if (!/^(\d{15}|\d{16})$/.test(b.npwp)) return 'NPWP harus 15 atau 16 digit angka.';
   if (!/^\S+@\S+\.\S+$/.test(b.email)) return 'Format email tidak valid.';
   if (!/^[0-9+()\-\s]{6,30}$/.test(b.phone)) return 'Nomor telepon tidak valid.';
   if (String(b.address).length > 255) return 'Alamat maksimal 255 karakter.';
@@ -37,7 +41,7 @@ function checkCustomer(b) {
 
 router.get('/', async (req, res, next) => {
   try {
-    res.json(await q(`SELECT u.id, u.name, u.email, u.company_name, u.nib_npwp, u.phone, u.address, u.is_active, u.must_change_password, u.created_at,
+    res.json(await q(`SELECT u.id, u.name, u.email, u.company_name, u.nib, u.npwp, u.phone, u.address, u.is_active, u.must_change_password, u.created_at,
         c.name created_by_name, (SELECT COUNT(*) FROM applications a WHERE a.user_id=u.id) applications
       FROM users u LEFT JOIN users c ON c.id=u.created_by WHERE u.role='user' ORDER BY u.created_at DESC, u.id DESC`));
   } catch (e) { next(e); }
@@ -47,12 +51,13 @@ router.post('/', async (req, res, next) => {
   try {
     const b = Object.fromEntries(FIELDS.map((k) => [k, String(req.body[k] ?? '').trim()]));
     b.email = b.email.toLowerCase();
+    b.nib = digits(b.nib); b.npwp = digits(b.npwp);
     const err = checkCustomer(b);
     if (err) return res.status(400).json({ message: err });
     if (await one('SELECT id FROM users WHERE email=?', [b.email])) return res.status(409).json({ message: 'Email sudah terdaftar.' });
     const pass = tempPassword();
-    const r = await q(`INSERT INTO users (role, name, email, password_hash, company_name, nib_npwp, phone, address, must_change_password, created_by)
-      VALUES ("user",?,?,?,?,?,?,?,1,?)`, [b.name, b.email, await bcrypt.hash(pass, 10), b.company_name, b.nib_npwp || null, b.phone || null, b.address || null, req.user.id]);
+    const r = await q(`INSERT INTO users (role, name, email, password_hash, company_name, nib, npwp, phone, address, must_change_password, created_by)
+      VALUES ('user',?,?,?,?,?,?,?,?,1,?)`, [b.name, b.email, await bcrypt.hash(pass, 10), b.company_name, b.nib, b.npwp, b.phone || null, b.address || null, req.user.id]);
     await sendLogin(b, pass);
     // sandi sementara ditampilkan sekali ke Admin, untuk berjaga jika email tidak terkirim
     res.status(201).json({ id: r.insertId, temp_password: pass });
@@ -65,11 +70,12 @@ router.put('/:id', async (req, res, next) => {
     if (!u) return res.status(404).json({ message: 'Pelanggan tidak ditemukan.' });
     const b = { ...u, ...Object.fromEntries(FIELDS.filter((k) => k in req.body).map((k) => [k, String(req.body[k] ?? '').trim()])) };
     b.email = b.email.toLowerCase();
+    b.nib = digits(b.nib); b.npwp = digits(b.npwp);
     const err = checkCustomer(b);
     if (err) return res.status(400).json({ message: err });
     if (await one('SELECT id FROM users WHERE email=? AND id<>?', [b.email, u.id])) return res.status(409).json({ message: 'Email sudah dipakai.' });
-    await q('UPDATE users SET name=?, email=?, company_name=?, nib_npwp=?, phone=?, address=?, is_active=? WHERE id=?',
-      [b.name, b.email, b.company_name, b.nib_npwp || null, b.phone || null, b.address || null, 'is_active' in req.body ? (req.body.is_active === false ? 0 : 1) : u.is_active, u.id]);
+    await q('UPDATE users SET name=?, email=?, company_name=?, nib=?, npwp=?, phone=?, address=?, is_active=? WHERE id=?',
+      [b.name, b.email, b.company_name, b.nib, b.npwp, b.phone || null, b.address || null, 'is_active' in req.body ? (req.body.is_active === false ? 0 : 1) : u.is_active, u.id]);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

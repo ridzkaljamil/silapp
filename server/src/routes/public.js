@@ -16,12 +16,14 @@ router.get('/contact', async (req, res, next) => {
 router.get('/services', async (req, res, next) => {
   try {
     const services = await q('SELECT id, parent_id, code, name, description, bidang, cp_name, cp_phone, est_text, state FROM services WHERE is_active=1 ORDER BY sort_order');
-    const steps = await q('SELECT service_id, step_order, status_code, name, progress_pct, is_optional, is_payment_step FROM service_steps ORDER BY service_id, step_order');
+    const steps = await q('SELECT service_id, flow, step_order, status_code, name, progress_pct, is_optional, is_payment_step FROM service_steps ORDER BY service_id, step_order');
     const counts = await q(`SELECT p.service_id, COUNT(DISTINCT p.id) products, COUNT(pp.id) parameters
       FROM products p LEFT JOIN product_parameters pp ON pp.product_id=p.id GROUP BY p.service_id`);
     const out = services.map((s) => ({
       ...s,
-      steps: steps.filter((x) => x.service_id === s.id),
+      steps: steps.filter((x) => x.service_id === s.id && !x.flow),
+      // alur khusus (SP: skema Tipe 1b)
+      steps_1b: steps.filter((x) => x.service_id === s.id && x.flow === '1B'),
       scope: counts.find((c) => c.service_id === s.id) || { products: 0, parameters: 0 },
     }));
     res.json(out);
@@ -33,14 +35,14 @@ router.get('/services/:code/scope', async (req, res, next) => {
   try {
     const s = await one('SELECT id FROM services WHERE code=?', [req.params.code]);
     if (!s) return res.status(404).json({ message: 'Layanan tidak ditemukan.' });
-    const products = await q('SELECT id, category, sub_category, name, standard_no, scheme_reference, scheme_types, package_price, package_price_alt, alt_available, note FROM products WHERE service_id=? ORDER BY id', [s.id]);
+    const products = await q('SELECT id, category, sub_category, name, standard_no, scheme_reference, scheme_types, package_price, package_price_alt, alt_available, note, custom_name FROM products WHERE service_id=? ORDER BY id', [s.id]);
     const params = await q('SELECT pp.id, pp.product_id, pp.name, pp.method, pp.price, pp.price_alt FROM product_parameters pp JOIN products p ON p.id=pp.product_id WHERE p.service_id=? ORDER BY pp.id', [s.id]);
     // SP: produk yang juga ada di ruang lingkup lab PSU (SNI sama) bisa diambil sebagai Paket LSPro + Lab
     const labs = req.params.code === 'SP' ? await q(`SELECT p.standard_no, p.package_price, s.name service_name FROM products p JOIN services s ON s.id=p.service_id
       WHERE s.code IN ('KIM','FIS','MIK') AND p.standard_no IS NOT NULL ORDER BY p.package_price IS NULL, p.id`) : [];
     res.json(products.map((p) => {
       const lab = p.standard_no && labs.find((l) => l.standard_no === p.standard_no);
-      return { ...p, alt_available: !!p.alt_available, parameters: params.filter((x) => x.product_id === p.id),
+      return { ...p, alt_available: !!p.alt_available, custom_name: !!p.custom_name, parameters: params.filter((x) => x.product_id === p.id),
         ...(req.params.code === 'SP' ? { lab_test: lab ? { service: lab.service_name, price: lab.package_price == null ? null : +lab.package_price } : null } : {}) };
     }));
   } catch (e) { next(e); }
@@ -65,8 +67,8 @@ router.get('/services/:code/form', async (req, res, next) => {
     const s = await one('SELECT id FROM services WHERE code=?', [req.params.code]);
     if (!s) return res.status(404).json({ message: 'Layanan tidak ditemukan.' });
     res.json({
-      fields: await q('SELECT field_key `key`, label, type, options, required, show_when FROM service_fields WHERE service_id=? AND is_active=1 ORDER BY sort_order, id', [s.id]),
-      documents: await q('SELECT id, name, required, admin_if_package FROM service_documents WHERE service_id=? AND is_active=1 ORDER BY sort_order, id', [s.id]),
+      fields: await q('SELECT field_key `key`, label, type, options, required, show_when, multiple FROM service_fields WHERE service_id=? AND is_active=1 ORDER BY sort_order, id', [s.id]),
+      documents: await q('SELECT id, name, required, admin_if_package, show_when, hide_schemes FROM service_documents WHERE service_id=? AND is_active=1 ORDER BY sort_order, id', [s.id]),
     });
   } catch (e) { next(e); }
 });

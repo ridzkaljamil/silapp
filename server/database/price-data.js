@@ -64,7 +64,7 @@ const KIMIA_SNI = [
     ['Bilangan Peroksida', 'SNI 7709:2019', null], ['Vitamin A', 'SNI 7709:2019', null], ['Minyak Pelikan', 'SNI 7709:2019', null],
     ['Cemaran Kadmium (Cd)', 'SNI 7709:2019', null], ['Cemaran Timbal (Pb)', 'SNI 7709:2019', null],
     ['Cemaran Timah (Sn)', 'SNI 7709:2019', null], ['Cemaran Merkuri (Hg)', 'SNI 7709:2019', null], ['Cemaran Arsen (As)', 'SNI 7709:2019', null]] },
-  { n: 'Parameter Tambahan di Luar Lingkup Akreditasi KAN', sni: null, pkg: [null, null], note: KIMIA_EXTRA_NOTE, p: [] },
+  { n: 'Parameter Tambahan di Luar Lingkup Akreditasi KAN', sni: null, pkg: [null, null], note: KIMIA_EXTRA_NOTE, custom: 1, p: [] },
 ].map((x) => ({ ...x, svc: 'KIM', cat: 'Uji SNI' }));
 
 const C = 'SNI 8752:2020 butir ';
@@ -86,6 +86,7 @@ const FISIKA = [
     ['Butir Kapur', 'SNI 6128:2020', null, null], ['Benda Asing', 'SNI 6128:2020', null, null], ['Butir Gabah', 'SNI 6128:2020', null, null]] },
   { n: 'Minyak Goreng Sawit', sni: 'SNI 7709:2019', pkg: [null, null], p: [
     ['Keadaan: Bau', 'SNI 7709:2019', null, null], ['Keadaan: Rasa', 'SNI 7709:2019', null, null], ['Warna', 'SNI 7709:2019', null, null]] },
+  { n: 'Parameter Tambahan di Luar Lingkup Akreditasi KAN', sni: null, pkg: [null, null], note: KIMIA_EXTRA_NOTE, custom: 1, p: [] },
 ].map((x) => ({ ...x, svc: 'FIS', cat: 'Uji SNI' }));
 
 module.exports = { LAB_PRICES: [...KIMIA_SNI, ...FISIKA], KIMIA_EXTRA_NOTE };

@@ -41,16 +41,29 @@ function ParamInline({ app, onChange }) {
   );
 }
 
+/** Isian bukti perbaikan pelanggan: koreksi, akar penyebab, tindakan korektif, keterangan tambahan. */
+export function FindingAnswer({ f }) {
+  const rows = [['Koreksi', f.correction], ['Akar Penyebab Masalah', f.root_cause], ['Tindakan Korektif untuk Mencegah Pengulangan', f.corrective_action], ['Keterangan Tambahan', f.customer_note]].filter(([, v]) => v);
+  if (!rows.length) return null;
+  return (
+    <dl className="f-answer small mb-1">
+      {rows.map(([k, v]) => <div key={k}><dt>{k}</dt><dd>{v}</dd></div>)}
+    </dl>
+  );
+}
+
 /** Temuan audit (SP): tabel di desktop, kartu di HP. */
 function FindingsPanel({ app, renderActions, extra, onDownloadDoc }) {
   if (!app.findings?.length && !extra) return null;
+  const chips = (list) => list?.length > 0 && <div>{list.map((d) => <button key={d.id} type="button" className="file-chip" onClick={() => onDownloadDoc(d)}><i className="bi bi-paperclip" />{d.original_name}</button>)}</div>;
   const sub = (f) => (
     <>
       {f.extension_status !== 'tidak' && <div className="f-note warn">{EXT[f.extension_status]}{f.extension_reason && ` · "${f.extension_reason}"`}</div>}
+      {chips(f.extension_files)}
       {f.status === 'dikirim' && <div className="f-note">Bukti perbaikan dikirim, menunggu tinjauan PSU.</div>}
-      {f.customer_note && <div className="f-note">Keterangan pelanggan: {f.customer_note}</div>}
+      <FindingAnswer f={f} />
       {f.admin_note && <div className="f-note">Catatan PSU: {f.admin_note}</div>}
-      {f.files?.length > 0 && <div>{f.files.map((d) => <button key={d.id} type="button" className="file-chip" onClick={() => onDownloadDoc(d)}><i className="bi bi-paperclip" />{d.original_name}</button>)}</div>}
+      {chips(f.files)}
     </>
   );
   const due = (f) => (f.status === 'ditutup' ? <span className="pill pill-done">Ditutup</span>
@@ -124,14 +137,14 @@ function InvoiceView({ p, onDownloadInvoice, onDownloadProof }) {
       {p.due_date && <div>Jatuh tempo: <b>{fmtDate(p.due_date)}</b></div>}
       {p.note && <div className="text-muted2">{p.note}</div>}
       <div className="d-flex flex-wrap gap-3 mt-2">
-        {onDownloadInvoice && <button type="button" className="btn btn-link btn-sm p-0" onClick={onDownloadInvoice}><i className="bi bi-file-earmark-pdf me-1" />Unduh Invoice (PDF)</button>}
+        {onDownloadInvoice && <button type="button" className="btn btn-link btn-sm p-0" onClick={onDownloadInvoice}><i className="bi bi-file-earmark-pdf me-1" />Unduh Proforma Invoice (PDF)</button>}
         {p.has_proof && onDownloadProof && <button type="button" className="btn btn-link btn-sm p-0" onClick={onDownloadProof}><i className="bi bi-receipt me-1" />Lihat Bukti Bayar</button>}
       </div>
     </div>
   );
 }
 
-const PAY = { belum: 'Invoice belum terbit', invoice: 'Menunggu pembayaran', menunggu: 'Bukti bayar diverifikasi', terverifikasi: 'Lunas' };
+const PAY = { belum: 'Proforma invoice belum terbit', invoice: 'Menunggu pembayaran', menunggu: 'Bukti bayar diverifikasi', terverifikasi: 'Lunas' };
 const PAYPILL = { belum: 'pill-progress', invoice: 'pill-action', menunggu: 'pill-action', terverifikasi: 'pill-done' };
 
 /** Daftar dokumen dengan tombol unduh. */
@@ -231,10 +244,10 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
     ...(showLab ? [['lab', 'Pengujian Lab']] : []),
     ...(showFindings ? [['temuan', 'Temuan', openF.length, openF.length > 0]] : []),
     ['dokumen', 'Dokumen', app.documents.length],
-    ...(app.payment ? [['invoice', 'Invoice']] : []),
+    ...(app.payment ? [['invoice', 'Proforma Invoice']] : []),
     ['riwayat', 'Riwayat'],
   ];
-  const pabrik = detailOf(app, 'kota_provinsi') || detailOf(app, 'alamat_pabrik');
+  const pabrik = [detailOf(app, 'kota_provinsi'), detailOf(app, 'provinsi_pabrik')].filter(Boolean).join(', ') || detailOf(app, 'alamat_pabrik');
   const merek = detailOf(app, 'merek_jenis') || detailOf(app, 'merek');
   const bar = mobileBar ?? headerActions;
 
@@ -304,7 +317,7 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
           )}
           {tab === 'invoice' && app.payment && (
             <section className="panel">
-              <div className="panel-h"><h2 className="mb-0">Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
+              <div className="panel-h"><h2 className="mb-0">Proforma Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
               <div className="panel-b"><InvoiceView p={app.payment} onDownloadInvoice={onDownloadInvoice} onDownloadProof={onDownloadProof} /></div>
             </section>
           )}
@@ -346,7 +359,7 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
                   {app.scheme && <FragmentRow k="Skema" v={app.scheme} />}
                   {app.origin && <FragmentRow k="Asal Produk" v={app.origin} />}
                   {app.location && <FragmentRow k="Lokasi" v={app.location === 'onsite' ? 'On-site' : 'Di laboratorium'} />}
-                  {app.details.filter((d) => !['kota_provinsi', 'merek'].includes(d.key)).map((d) => <FragmentRow key={d.label} k={d.label} v={<span style={{ whiteSpace: 'pre-line' }}>{d.value}</span>} />)}
+                  {app.details.filter((d) => !['kota_provinsi', 'provinsi_pabrik', 'merek'].includes(d.key)).map((d) => <FragmentRow key={d.label} k={d.label} v={<span style={{ whiteSpace: 'pre-line' }}>{d.value}</span>} />)}
                   {app.equipment.map((e) => <FragmentRow key={e.id} k="Alat" v={`${e.name} ${e.brand_model || ''} · S/N ${e.serial_number || '-'} · ${e.range_capacity || ''}`} />)}
                   {app.samples.map((x) => <FragmentRow key={x.id} k="Sampel" v={`${x.description} · ${x.quantity} sampel`} />)}
                 </dl>
@@ -355,13 +368,13 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
           </section>
           {app.payment ? (
             <section className="panel panel-b inv-mini">
-              <div className="d-flex justify-content-between align-items-center gap-2"><h2 className="mb-0">Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
+              <div className="d-flex justify-content-between align-items-center gap-2"><h2 className="mb-0">Proforma Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
               <div className="amt num">{rupiah(app.payment.amount)}</div>
               <div className="small text-muted2"><span className="mono">{app.payment.invoice_no}</span> · termasuk PPN{app.payment.pph23 > 0 ? ', dipotong PPh 23' : ''}{app.payment.due_date && app.payment_status !== 'terverifikasi' && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}</div>
               <button type="button" className="btn btn-link btn-sm p-0 mt-1 fw-semibold align-self-start" style={{ minHeight: 0 }} onClick={() => setTab('invoice')}>Lihat Rincian</button>
             </section>
           ) : app.current_step.is_payment_step && (
-            <section className="panel panel-b inv-mini"><h2 className="mb-1">Invoice</h2><span className="small text-muted2">Belum terbit.</span></section>
+            <section className="panel panel-b inv-mini"><h2 className="mb-1">Proforma Invoice</h2><span className="small text-muted2">Belum terbit.</span></section>
           )}
         </aside>
       </div>

@@ -12,7 +12,7 @@ async function requireAuth(req, res, next) {
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
     const user = await one(
-      'SELECT id, role, name, email, jabatan, bidang, company_name, phone, address, avatar, is_active, must_change_password FROM users WHERE id=?', [payload.id]);
+      'SELECT id, role, name, email, jabatan, bidang, company_name, nib, npwp, phone, address, avatar, is_active, must_change_password FROM users WHERE id=?', [payload.id]);
     if (!user || !user.is_active) return res.status(401).json({ message: 'Akun tidak aktif.' });
     req.user = user;
   } catch {

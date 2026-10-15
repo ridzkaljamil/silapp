@@ -79,10 +79,15 @@ function SvcHero({ s, badge, title }) {
       <ol className="steps-list align-content-start">
         {steps.map((x, i) => (
           <li key={x.step_order} className={i === steps.length - 1 ? 'current' : 'done'} style={{ color: 'var(--text)', fontWeight: 500 }}>
-            <span className="dot" style={x.is_optional ? { background: 'none', border: '1.5px dashed #98A2B3', color: 'var(--muted)' } : i === steps.length - 1 ? undefined : { background: 'var(--chip)', color: 'var(--navy)' }}>{i + 1}</span>
+            <span className="dot" style={x.is_optional ? { background: 'none', border: '1.5px dashed #98A2B3', color: 'var(--muted)' } : i === steps.length - 1 ? { background: 'var(--gold)', color: 'var(--navy)' } : { background: 'var(--chip)', color: 'var(--navy)' }}>{i + 1}</span>
             <span>{x.name}{x.is_optional ? <span className="text-muted2"> · jika ada temuan</span> : null}</span>
           </li>
         ))}
+        {s.steps_1b?.length > 0 && (
+          <li className="small text-muted2 d-block mt-1" style={{ listStyle: 'none' }}>
+            <b className="text-body">Skema Tipe 1b</b> ({s.steps_1b.length} tahap, tanpa audit): {s.steps_1b.map((x) => x.name).join(' → ')}.
+          </li>
+        )}
       </ol>
     </section>
   );

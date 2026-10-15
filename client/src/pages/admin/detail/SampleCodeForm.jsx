@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import api, { errMsg } from '../../../api';
-import { useToast } from '../../../components/ui';
+import { useToast, useConfirm } from '../../../components/ui';
 
 /** Lab pengujian: kode / identitas sampel diisi Admin saat sampel diterima & diregistrasi. */
 export default function SampleCodeForm({ app, onSaved }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const cur = app.details.find((d) => d.key === 'kode_sampel')?.value || '';
   const [v, setV] = useState(cur);
   const [busy, setBusy] = useState(false);
   const save = async (e) => {
     e.preventDefault();
+    if (!(await confirm({ title: 'Simpan Kode Sampel?', body: <>Kode sampel <b>{v || '(kosong)'}</b> tampil juga di detail pengajuan pelanggan.</>, ok: 'Ya, Simpan', icon: 'upc-scan' }))) return;
     setBusy(true);
     try { onSaved((await api.post(`/admin/applications/${app.id}/sample-code`, { code: v })).data); toast('Kode sampel disimpan.'); } catch (ex) { toast(errMsg(ex), 'danger'); } finally { setBusy(false); }
   };

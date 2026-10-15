@@ -94,7 +94,7 @@ router.post('/applications/:id/action', upload.fields([{ name: 'certificate', ma
     const { action, note } = req.body;
     const internal = req.body.internal === '1' || req.body.internal === true;
     const opts = { files: req.files?.attachments || [], docName: (req.body.doc_name || '').trim() || undefined };
-    if (action === 'setujui') await wf.approve(app, req.user, { ...opts, note, internal, certificateNo: req.body.certificate_no, certFile: req.files?.certificate?.[0]?.filename });
+    if (action === 'setujui') await wf.approve(app, req.user, { ...opts, note, internal, certificateNo: String(req.body.certificate_no || '').trim().slice(0, 60), certFile: req.files?.certificate?.[0]?.filename });
     else if (action === 'minta_tindakan') await wf.requestAction(app, req.user, note, opts);
     else if (action === 'abaikan') await wf.ignore(app, req.user, note, internal, opts);
     else if (action === 'tolak') await wf.reject(app, req.user, note, opts);
@@ -104,7 +104,7 @@ router.post('/applications/:id/action', upload.fields([{ name: 'certificate', ma
 });
 
 /**
- * Terbitkan / perbarui invoice. body (JSON): items [{label, qty, unit, price}] (SP/Kalibrasi), extra (biaya tambahan lab),
+ * Terbitkan / perbarui invoice. body (JSON): items [{label, method, qty, unit, price}] (pekerjaan SP/Kalibrasi, atau pekerjaan/biaya tambahan lab),
  * custom_prices {paramId: harga} (parameter lainnya lab), with_pph23 (bool), due_date, note.
  */
 router.post('/applications/:id/invoice', async (req, res, next) => {
@@ -112,7 +112,7 @@ router.post('/applications/:id/invoice', async (req, res, next) => {
     const app = await handledApp(req);
     const b = req.body || {};
     wf.assertStep(app, b.step);
-    await wf.issueInvoice(app, req.user, { items: b.items, extra: b.extra, customPrices: b.custom_prices || {}, withPph23: !!b.with_pph23, dueDate: b.due_date, note: b.note });
+    await wf.issueInvoice(app, req.user, { items: b.items, customPrices: b.custom_prices || {}, withPph23: !!b.with_pph23, dueDate: b.due_date, note: b.note });
     res.json(await fresh(app));
   } catch (e) { next(e); }
 });

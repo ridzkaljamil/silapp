@@ -1,7 +1,7 @@
 /** Survei kepuasan pelanggan per layanan: rekap, tindak lanjut, ekspor, pengaturan (Super Admin). */
 import { useEffect, useState, useCallback } from 'react';
 import api, { errMsg, download } from '../../api';
-import { PageHead, Loading, useToast, fmtDate, fmtDateTime, MobileList, Sheet, DataToolbar, matchText } from '../../components/ui';
+import { PageHead, Loading, useToast, useConfirm, fmtDate, fmtDateTime, MobileList, Sheet, DataToolbar, matchText } from '../../components/ui';
 
 const TABS = [['SP', 'LSPro'], ['LAB', 'Lab Pengujian'], ['KAL', 'Lab Kalibrasi']];
 const avgText = (v) => (v === null || v === undefined ? '—' : String((+v).toFixed(2)).replace('.', ','));
@@ -10,6 +10,7 @@ const contactText = (r) => (r.contact_ok === 1 ? `Ya${r.contact_info ? ` · ${r.
 /** Detail satu responden + riwayat tindak lanjut. */
 function ResponseSheet({ id, onClose, onChanged }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [r, setR] = useState(null);
   const [note, setNote] = useState('');
   const [busy, setBusy] = useState(false);
@@ -17,6 +18,7 @@ function ResponseSheet({ id, onClose, onChanged }) {
   useEffect(() => { setNote(''); load(); }, [load]);
   const add = async () => {
     if (!note.trim()) return toast('Isi catatan tindak lanjut.', 'danger');
+    if (!(await confirm({ title: 'Catat Tindak Lanjut?', body: 'Catatan tindak lanjut disimpan pada survei ini.', ok: 'Ya, Simpan', icon: 'clipboard-check' }))) return null;
     setBusy(true);
     try { await api.post(`/superadmin/survey/responses/${id}/followups`, { note }); setNote(''); toast('Tindak lanjut dicatat.'); load(); onChanged(); } catch (e) { toast(errMsg(e), 'danger'); } finally { setBusy(false); }
   };
@@ -48,6 +50,7 @@ function ResponseSheet({ id, onClose, onChanged }) {
 
 export default function Survei() {
   const toast = useToast();
+  const confirm = useConfirm();
   const [bidang, setBidang] = useState('SP');
   const [d, setD] = useState(null);
   const [qs, setQs] = useState([]);
@@ -69,6 +72,7 @@ export default function Survei() {
 
   const save = async () => {
     const removed = d.questions.filter((x) => x.is_active && !qs.some((y) => y.id === x.id)).map((x) => ({ ...x, deleted: true }));
+    if (!(await confirm({ title: 'Simpan Pengaturan Survei?', body: `${qs.length} pertanyaan${removed.length ? `, ${removed.length} dihapus` : ''}. Perubahan berlaku untuk survei berikutnya.`, ok: 'Ya, Simpan', icon: 'floppy' }))) return;
     setSaving(true);
     try {
       const r = await api.put('/superadmin/survey', { bidang, questions: [...qs, ...removed], intro, thank_you_text: thanks });

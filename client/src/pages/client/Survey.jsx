@@ -2,13 +2,14 @@
 import { useEffect, useState } from 'react';
 import { useLocalDraft } from '../../hooks/useLocalDraft';
 import api, { errMsg } from '../../api';
-import { Loading, useToast } from '../../components/ui';
+import { Loading, useToast, useConfirm } from '../../components/ui';
 import { docWord } from '../../lib/constants';
 
 const SCALE = ['Sangat Tidak Puas', 'Tidak Puas', 'Cukup Puas', 'Puas', 'Sangat Puas'];
 
 export default function Survey({ app, onDone }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [data, setData] = useState(null);
   // isian survei tersimpan otomatis di browser sampai terkirim
   const [scores, setScores, clearScores] = useLocalDraft(`silapp_survei_${app.id}_nilai`, {});
@@ -30,6 +31,7 @@ export default function Survey({ app, onDone }) {
       if (first) document.getElementById(`sq-${first.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return toast(answered < data.questions.length ? 'Mohon beri nilai untuk semua pertanyaan penilaian.' : 'Isi nama perusahaan/instansi dan nama responden.', 'danger');
     }
+    if (!(await confirm({ title: 'Kirim Survei?', body: 'Jawaban survei tidak dapat diubah setelah dikirim. Dokumen dapat diunduh setelah survei terkirim.', ok: 'Ya, Kirim', icon: 'clipboard-check' }))) return;
     setBusy(true);
     try { const r = await api.post(`/applications/${app.id}/survey`, { ...f, scores }); clearScores(); clearF(); onDone(r.data); } catch (e) { toast(errMsg(e), 'danger'); } finally { setBusy(false); }
   };

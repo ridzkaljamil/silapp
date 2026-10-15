@@ -1,11 +1,22 @@
-/** Input kustom: dropdown (Select) dan area unggah file (FileDrop). */
+/** Input kustom: dropdown (Select), area unggah file (FileDrop), dan isian Rupiah (MoneyInput). */
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useDismiss } from '../hooks/useDismiss';
-import { FILE_ACCEPT, MAX_FILE_MB } from '../lib/format';
+import { FILE_ACCEPT, FILE_HINT, MAX_FILE_MB, fileSize, onlyDigits } from '../lib/format';
 import { useToast } from './feedback';
 
 /**
- * Buang file yang melebihi batas ukuran sebelum dikirim (server juga menolak di atas 10 MB),
+ * Isian nominal Rupiah: hanya menerima angka (huruf yang diketik langsung dibuang) dan tampil dengan titik ribuan.
+ * value/onChange berupa teks digit ("250000"); kosong = belum diisi.
+ */
+export function MoneyInput({ value, onChange, size, className = '', prefix = true, ...rest }) {
+  const shown = onlyDigits(value) ? (+onlyDigits(value)).toLocaleString('id-ID') : '';
+  const input = <input type="text" inputMode="numeric" autoComplete="off" className={`form-control text-end ${size ? `form-control-${size}` : ''} ${prefix ? '' : className}`} value={shown} onChange={(e) => onChange(onlyDigits(e.target.value))} {...rest} />;
+  if (!prefix) return input;
+  return <div className={`input-group ${size ? `input-group-${size}` : ''} ${className}`}><span className="input-group-text">Rp</span>{input}</div>;
+}
+
+/**
+ * Buang file yang melebihi batas ukuran sebelum dikirim (server juga menolak di atas batas yang sama),
  * supaya pengguna langsung tahu tanpa menunggu unggahan gagal.
  */
 export function useFileGuard() {
@@ -18,19 +29,47 @@ export function useFileGuard() {
   }, [toast]);
 }
 
-/** Area unggah file bergaya dropzone (tetap memakai input file biasa). */
-export function FileDrop({ id, multiple, accept = FILE_ACCEPT, files, onChange, label = 'Pilih file', hint = 'PDF, Word, ZIP, JPG atau PNG · maks. 10 MB' }) {
+/**
+ * Area unggah file bergaya dropzone (tetap memakai input file biasa). File terpilih tampil sebagai daftar,
+ * masing-masing dengan tombol × untuk membatalkan. multiple: pilihan berikutnya ditambahkan ke daftar.
+ */
+export function FileDrop({ id, multiple, accept = FILE_ACCEPT, files, onChange, label = 'Pilih file', hint = FILE_HINT, max = 5 }) {
   const guard = useFileGuard();
-  const n = files?.length || 0;
+  const toast = useToast();
+  const list = [...(files || [])];
+  const n = list.length;
+  const add = (picked) => {
+    const ok = guard(picked);
+    if (!ok.length) return;
+    if (!multiple) { onChange(ok.slice(0, 1)); return; }
+    const key = (f) => `${f.name}|${f.size}`;
+    const merged = [...list, ...ok.filter((f) => !list.some((x) => key(x) === key(f)))];
+    if (merged.length > max) toast(`Maksimal ${max} file. File selebihnya tidak ditambahkan.`, 'danger');
+    onChange(merged.slice(0, max));
+  };
+  const remove = (i) => onChange(list.filter((_, k) => k !== i));
   return (
-    <label className={`file-drop ${n ? 'has' : ''}`} htmlFor={id}>
-      <i className={`bi bi-${n ? 'check2-circle' : 'cloud-arrow-up'}`} aria-hidden="true" />
-      <span className="min-w-0">
-        <b>{n ? (n === 1 ? files[0].name : `${n} file dipilih`) : label}</b>
-        <small>{n ? 'Klik untuk mengganti' : hint}</small>
-      </span>
-      <input id={id} type="file" multiple={multiple} accept={accept} className="visually-hidden" onChange={(e) => { onChange(guard(e.target.files)); e.target.value = ''; }} />
-    </label>
+    <div className="file-drop-wrap">
+      <label className={`file-drop ${n ? 'has' : ''}`} htmlFor={id}>
+        <i className={`bi bi-${n ? 'check2-circle' : 'cloud-arrow-up'}`} aria-hidden="true" />
+        <span className="min-w-0">
+          <b>{n ? (multiple ? `${n} file dipilih` : list[0].name) : label}</b>
+          <small>{n ? (multiple ? (n < max ? 'Klik untuk menambah file' : `Maksimal ${max} file`) : 'Klik untuk mengganti') : hint}</small>
+        </span>
+        <input id={id} type="file" multiple={multiple} accept={accept} className="visually-hidden" onChange={(e) => { add(e.target.files); e.target.value = ''; }} />
+      </label>
+      {n > 0 && (
+        <ul className="file-list" aria-label="File terpilih">
+          {list.map((f, i) => (
+            <li key={`${f.name}-${f.size}-${i}`}>
+              <i className="bi bi-file-earmark-text" aria-hidden="true" />
+              <span className="min-w-0 flex-grow-1"><span className="file-name">{f.name}</span><small>{fileSize(f.size)}</small></span>
+              <button type="button" className="file-x" onClick={() => remove(i)} aria-label={`Batalkan lampiran ${f.name}`} title="Batalkan lampiran"><i className="bi bi-x-lg" /></button>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
 

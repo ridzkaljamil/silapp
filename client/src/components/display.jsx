@@ -57,12 +57,14 @@ const SHORT = {
   'KAL-01': 'Permohonan', 'KAL-02': 'Kontrak & Bayar', 'KAL-03': 'Registrasi', 'KAL-04': 'Persiapan', 'KAL-05': 'Kalibrasi',
   'KAL-06': 'Review', 'KAL-07': 'Penerbitan', 'KAL-08': 'Sertifikat', 'KAL-09': 'Pengembalian',
 };
-const shortStep = (s) => SHORT[s.code] || s.name;
+/** Alur Tipe 1b memakai kode ST-xx dengan nama tahap berbeda, jadi beberapa label pendek dicocokkan lewat nama. */
+const SHORT_NAME = { Sampling: 'Sampling', 'Review & Keputusan': 'Review & Keputusan', 'Sertifikat Terbit': 'Sertifikat', 'Pengujian Laboratorium': 'Uji Lab' };
+const shortStep = (s) => SHORT_NAME[s.name] || SHORT[s.code] || s.name;
 
 const NOW = ['current', 'action', 'closed'];
 const passed = (s) => !!s && ['done', 'skipped'].includes(s.state);
 
-/** Bar tahapan bernomor: lingkaran per tahap (selesai = centang navy, berjalan = emas). Di layar sempit bisa digeser. */
+/** Bar tahapan bernomor: lingkaran per tahap (selesai = centang navy, berjalan = hijau). Di layar sempit bisa digeser. */
 export function StepTrack({ steps, onSelect }) {
   const ref = useRef(null);
   // geser agar tahap saat ini terlihat di tengah

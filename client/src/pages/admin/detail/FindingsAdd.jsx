@@ -1,10 +1,11 @@
 import { useState } from 'react';
 import api, { errMsg } from '../../../api';
-import { useToast, Sheet, Select, todayYmd, addMonths } from '../../../components/ui';
+import { useToast, useConfirm, Sheet, Select, todayYmd, addMonths } from '../../../components/ui';
 
 /** Input laporan audit + temuan (SP, ST-05 s.d. ST-07) — dibuka sebagai pop-up. */
 export default function FindingsAdd({ app, onSaved }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [open, setOpen] = useState(false);
   const [date, setDate] = useState(app.audit_report_date || todayYmd());
   const [items, setItems] = useState([{ category: 'minor', description: '', due_date: '' }]);
@@ -13,6 +14,7 @@ export default function FindingsAdd({ app, onSaved }) {
   const set = (i, k, v) => setItems(items.map((x, j) => (j === i ? { ...x, [k]: v } : x)));
   const save = async () => {
     if (items.some((x) => !x.description.trim())) return toast('Isi uraian setiap temuan.', 'danger');
+    if (!(await confirm({ title: 'Kirim Temuan Audit?', body: `${items.length} temuan dicatat dan pelanggan menerima email beserta tenggat perbaikannya.`, ok: 'Ya, Kirim', icon: 'clipboard-check' }))) return null;
     setBusy(true);
     try {
       const r = await api.post(`/admin/applications/${app.id}/findings`, { report_date: date, items: items.map((x) => ({ ...x, due_date: x.due_date || undefined })) });

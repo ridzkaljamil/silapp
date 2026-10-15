@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import api, { errMsg, download } from '../../api';
-import { PageHead, Loading, useToast, useConfirm, rupiah, FILE_ACCEPT, Select, useFileGuard } from '../../components/ui';
+import { PageHead, Loading, useToast, useConfirm, rupiah, FILE_ACCEPT, FILE_HINT, Select, useFileGuard, taxes } from '../../components/ui';
 import { SERVICE_STATE as STATE, PRICE_OPTIONS } from '../../lib/constants';
 
 const stepNames = (code) => ['Pilih Layanan', code === 'SP' ? 'Data Permohonan' : 'Data & Parameter', 'Unggah Dokumen', 'Konfirmasi'];
@@ -15,10 +15,8 @@ const pickType = (cur, t) => {
 };
 const SURV_TEXT = 'Kami bersedia dilakukan surveilan oleh PT Penilai Standar Uji selama masa berlaku sertifikat.';
 const ORIGINS = [['dn', 'Dalam Negeri'], ['ln', 'Luar Negeri']];
-/** PPN 12% × DPP nilai lain (11/12 harga) = 11% dari harga, sama dengan invoice PSU. */
-const ppnOf = (h) => Math.round((h * 11) / 100);
 const EMPTY_SP = { category: '', product_id: '', scheme: '', types: ['Sertifikasi Awal'], origin: '', brands: [{ merek: '', jenis: '' }], is_package: false };
-const EMPTY_LAB = { product_id: '', quantity: 1, params: [], full_sni: false, custom: [''], option: 'std' };
+const EMPTY_LAB = { product_id: '', quantity: 1, params: [], full_sni: false, custom: [''], option: 'std', custom_product: '', specs: [{ brand: '', spec: '' }] };
 const EMPTY_KAL = { name: '', brand_model: '', serial_number: '', range_capacity: '', resolution: '', calibration_points: '', accessories: '', quantity: 1, location: 'lab' };
 const validQty = (v) => Number.isInteger(+v) && +v >= 1 && +v <= 999 && String(v).trim() !== '';
 const fmtSaved = (d) => new Date(d).toLocaleString('id-ID', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -26,8 +24,37 @@ const fmtSaved = (d) => new Date(d).toLocaleString('id-ID', { day: 'numeric', mo
 /** Pembungkus label + field (di luar komponen agar input tidak kehilangan fokus saat mengetik). */
 const F = ({ label, children, id, full, req }) => <div className={full ? 'col-12' : 'col-md-6'}><label className="form-label" htmlFor={id}>{label}{req ? <span className="text-danger"> *</span> : null}</label>{children}</div>;
 
+/** Isian Nomor + Tanggal (mis. Nomor Bill of Lading + tanggalnya); multiple: bisa lebih dari satu baris. */
+const PAIR_MAX = 10;
+const pairsOf = (v) => (Array.isArray(v) && v.length ? v : [{ no: '', date: '' }]);
+function PairField({ f, value, onChange }) {
+  const rows = pairsOf(value);
+  const set = (i, k, v) => onChange(f.key, rows.map((r, n) => (n === i ? { ...r, [k]: v } : r)));
+  const id = `fx-${f.key}`;
+  return (
+    <div className="col-12">
+      <span className="form-label d-block" id={`${id}-l`}>{f.label}{f.required ? <span className="text-danger"> *</span> : null}</span>
+      <div className="d-flex flex-column gap-2" role="group" aria-labelledby={`${id}-l`}>
+        {rows.map((r, i) => (
+          <div key={i} className="pair-row pair-date">
+            <input id={i === 0 ? id : undefined} className="form-control" placeholder="Nomor" aria-label={`${f.label} – nomor ${i + 1}`} value={r.no} maxLength={80} onChange={(e) => set(i, 'no', e.target.value)} />
+            <input type="date" className="form-control" aria-label={`${f.label} – tanggal ${i + 1}`} value={r.date} onChange={(e) => set(i, 'date', e.target.value)} />
+            <button type="button" className="btn btn-outline-danger" aria-label={`Hapus ${f.label} ${i + 1}`} disabled={rows.length === 1 && !r.no && !r.date}
+              onClick={() => onChange(f.key, rows.length === 1 ? [{ no: '', date: '' }] : rows.filter((_, n) => n !== i))}><i className="bi bi-x-lg" /></button>
+          </div>
+        ))}
+      </div>
+      {!!f.multiple && <button type="button" className="btn btn-outline-secondary btn-sm mt-2" disabled={rows.length >= PAIR_MAX} onClick={() => onChange(f.key, [...rows, { no: '', date: '' }])}><i className="bi bi-plus-lg" />Tambah {f.label.replace(/^Nomor\s+/i, '')}</button>}
+    </div>
+  );
+}
+/** Baris Nomor + Tanggal yang terisi lengkap / setengah. */
+const filledPairs = (v) => (Array.isArray(v) ? v.filter((r) => r.no?.trim() || r.date) : []);
+const pairText = (v) => filledPairs(v).map((r) => `${r.no}${r.date ? ` · ${new Date(`${r.date}T00:00:00`).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' })}` : ''}`).join('; ');
+
 /** Isian dari form builder (diatur Super Admin). */
 function DynField({ f, value, onChange }) {
+  if (f.type === 'nomor_tanggal') return <PairField f={f} value={value} onChange={onChange} />;
   const id = `fx-${f.key}`;
   const common = { id, className: f.type === 'select' ? 'form-select' : 'form-control', value: value || '', onChange: (e) => onChange(f.key, e.target.value), required: !!f.required };
   let input;
@@ -104,7 +131,7 @@ export default function Ajukan() {
   const saveDraft = async (quiet) => {
     if (!code || submitted.current) return;
     try {
-      const r = await api.put('/drafts', { service_code: code, stage, payload: { sp, lab, kal, values } });
+      const r = await api.put('/drafts', { service_code: code, stage, payload: { sp, lab, kal, values } }, { silent: true });
       setSavedAt(r.data.updated_at);
       if (!quiet) toast('Draft disimpan. Anda bisa melanjutkannya nanti dari Beranda.');
     } catch (e) { if (!quiet) toast(errMsg(e), 'danger'); }
@@ -116,7 +143,8 @@ export default function Ajukan() {
     return () => clearTimeout(t);
   }, [code, stage, sp, lab, kal, values, busy]); // eslint-disable-line react-hooks/exhaustive-deps
   const discardDraft = async () => {
-    await api.delete('/drafts').catch(() => {});
+    if (!(await confirm({ title: 'Hapus Draft?', body: 'Isian pengajuan yang tersimpan akan dihapus dan tidak dapat dikembalikan.', ok: 'Hapus Draft', danger: true, icon: 'trash' }))) return;
+    await api.delete('/drafts', { silent: true }).catch(() => {});
     setDraft(null); setSavedAt(null);
     toast('Draft dihapus.');
   };
@@ -127,6 +155,8 @@ export default function Ajukan() {
   const spProduct = scope.find((p) => p.id === +sp.product_id);
   const schemes = spProduct?.scheme_types ? spProduct.scheme_types.split('/').map((x) => x.trim()) : [];
   const is1B = /1b/i.test(sp.scheme);
+  // SP skema Tipe 1b memakai alur tahapan sendiri (tanpa audit & tindakan perbaikan)
+  const flowSteps = (code === 'SP' && is1B && svc?.steps_1b?.length ? svc.steps_1b : svc?.steps) || [];
   const isLab = code && code !== 'SP' && code !== 'KAL';
   const labProduct = scope.find((p) => p.id === +lab.product_id);
   const priceOpt = PRICE_OPTIONS[code];
@@ -138,9 +168,16 @@ export default function Ajukan() {
   const altExtra = alt && !!labProduct && (lab.full_sni ? labProduct.package_price_alt == null : labProduct.parameters.some((p) => lab.params.includes(p.id) && p.price_alt == null));
   const pickProduct = (p) => setLab({ ...lab, product_id: p.id, params: [], full_sni: false, option: p.alt_available ? lab.option : 'std' });
   const customParams = lab.custom.map((x) => x.trim()).filter(Boolean);
+  // produk di luar lingkup akreditasi KAN: nama produk & parameter ditulis pelanggan
+  const customProduct = !!labProduct?.custom_name;
+  const setSpec = (i, k, v) => setLab({ ...lab, specs: lab.specs.map((x, n) => (n === i ? { ...x, [k]: v } : x)) });
+  const labSpecs = lab.specs.filter((x) => x.brand.trim() || x.spec.trim());
+  const specText = (x) => [x.brand.trim(), x.spec.trim()].filter(Boolean).join(' / ');
   const setCustom = (i, v) => setLab({ ...lab, custom: lab.custom.map((x, k) => (k === i ? v : x)) });
   const surveillance = code === 'SP' && sp.types.includes('Surveillance');
-  const docList = formDef.documents.filter((d) => d.show_when !== 'SURV' || surveillance);
+  // berkas yang tidak diperlukan untuk tipe skema terpilih (mis. Tipe 1b) disembunyikan — diatur di Kelola Layanan
+  const hiddenForScheme = (d) => code === 'SP' && !!sp.scheme && String(d.hide_schemes || '').split(',').map((x) => x.trim().toLowerCase()).includes(sp.scheme.trim().toLowerCase());
+  const docList = formDef.documents.filter((d) => (d.show_when !== 'SURV' || surveillance) && !hiddenForScheme(d));
   const setExtra = (i, k, v) => setExtraDocs(extraDocs.map((x, n) => (n === i ? { ...x, [k]: v } : x)));
   const setBrand = (i, k, v) => setSp({ ...sp, brands: sp.brands.map((b, n) => (n === i ? { ...b, [k]: v } : b)) });
   const templateOf = (name) => templates.find((t) => t.name === name);
@@ -148,7 +185,7 @@ export default function Ajukan() {
   const needDoc = (d) => !!d.required && !(d.admin_if_package && sp.is_package && code === 'SP');
   const labEstimate = labProduct ? (lab.full_sni ? +pkgPrice || 0
     : labProduct.parameters.filter((p) => lab.params.includes(p.id)).reduce((t, p) => t + (+priceOf(p) || 0), 0)) * (+lab.quantity || 1) : 0;
-  const labPpn = ppnOf(labEstimate);
+  const labPpn = taxes(labEstimate).ppn;
   const noPrice = !!labProduct && !lab.full_sni && labProduct.parameters.some((p) => lab.params.includes(p.id) && priceOf(p) == null);
 
   if (!services) return <Loading />;
@@ -170,8 +207,16 @@ export default function Ajukan() {
       if (code === 'KAL' && !kal.name.trim()) return 'Nama alat wajib diisi.';
       if (code === 'KAL' && !validQty(kal.quantity)) return 'Jumlah alat harus bilangan bulat 1–999.';
       if (isLab && !validQty(lab.quantity)) return 'Jumlah sampel harus bilangan bulat 1–999.';
+      if (isLab && customProduct && !lab.custom_product.trim()) return 'Tuliskan nama produk yang akan diuji.';
+      if (isLab && customProduct && !customParams.length) return 'Tuliskan minimal satu parameter yang dibutuhkan.';
       if (isLab && !lab.full_sni && !lab.params.length && !customParams.length) return 'Pilih minimal satu parameter uji.';
-      const miss = fields.find((f) => f.required && !String(values[f.key] || '').trim());
+      for (const f of fields.filter((x) => x.type === 'nomor_tanggal')) {
+        const rows = filledPairs(values[f.key]);
+        if (rows.some((r) => !r.no?.trim())) return `Nomor pada isian ${f.label} wajib diisi.`;
+        if (rows.some((r) => !r.date)) return `Tanggal pada isian ${f.label} wajib diisi.`;
+        if (f.required && !rows.length) return `${f.label} wajib diisi.`;
+      }
+      const miss = fields.find((f) => f.type !== 'nomor_tanggal' && f.required && !String(values[f.key] || '').trim());
       if (miss) return `${miss.label} wajib diisi.`;
     }
     if (stage === 3) {
@@ -185,14 +230,18 @@ export default function Ajukan() {
   const next = () => { const e = validate(); if (e) return toast(e, 'danger'); setStage(stage + 1); return null; };
 
   const submit = async () => {
-    const data = { fields: Object.fromEntries(fields.map((f) => [f.key, values[f.key] || ''])) };
+    if (busy) return;
+    const ok = await confirm({ title: 'Kirim Pengajuan?', icon: 'send', ok: 'Ya, Kirim',
+      body: <>Pengajuan <b>{svc?.name}</b> akan dikirim ke PSU. Pastikan data dan berkas sudah benar; setelah terkirim data tidak dapat diubah sendiri.</> });
+    if (!ok) return;
+    const data = { fields: Object.fromEntries(fields.map((f) => [f.key, f.type === 'nomor_tanggal' ? filledPairs(values[f.key]) : values[f.key] || ''])) };
     if (code === 'SP') {
       Object.assign(data, { product_id: +sp.product_id, scheme: sp.scheme || null, application_type: sp.types.join(', '), origin: sp.origin,
         brands: sp.brands.filter((b) => b.merek.trim()), is_package: sp.is_package });
     } else if (code === 'KAL') {
       Object.assign(data, { equipment: { ...kal, quantity: +kal.quantity }, location: kal.location });
     } else {
-      Object.assign(data, { product_id: +lab.product_id || null, price_option: alt ? 'alt' : 'std', full_sni: lab.full_sni, parameter_ids: lab.full_sni ? [] : lab.params, custom_params: customParams, sample: { description: labProduct?.name, quantity: +lab.quantity } });
+      Object.assign(data, { product_id: +lab.product_id || null, price_option: alt ? 'alt' : 'std', full_sni: lab.full_sni, parameter_ids: lab.full_sni ? [] : lab.params, custom_params: customParams, custom_product: customProduct ? lab.custom_product.trim() : '', specs: labSpecs.map((x) => ({ brand: x.brand.trim(), spec: x.spec.trim() })), sample: { description: customProduct ? lab.custom_product.trim() : labProduct?.name, quantity: +lab.quantity } });
     }
     const fd = new FormData();
     fd.append('service_code', code);
@@ -216,7 +265,7 @@ export default function Ajukan() {
         r = await api.post('/applications', fd);
       }
       submitted.current = true;
-      await api.delete('/drafts').catch(() => {});
+      await api.delete('/drafts', { silent: true }).catch(() => {});
       toast(`Pengajuan ${r.data.application_no} terkirim. Kode lacak ${r.data.tracking_code} dikirim ke email Anda.`);
       nav(`/klien/pengajuan/${r.data.id}`);
     } catch (e) { toast(errMsg(e), 'danger'); } finally { setBusy(false); }
@@ -307,13 +356,13 @@ export default function Ajukan() {
               <div className="col-12">
                 {spProduct?.lab_test && !sp.is_package && (
                   <div className="alert alert-info small d-flex flex-wrap align-items-center gap-2 mb-2">
-                    <span className="flex-grow-1"><i className="bi bi-lightbulb me-1" />Produk ini bisa diuji di {spProduct.lab_test.service} PSU{spProduct.lab_test.price ? <> (paket lengkap SNI {rupiah(spProduct.lab_test.price)}/sampel, belum termasuk PPN)</> : ''}. Pilih paket agar sertifikasi dan uji lab diproses bersama dan ditagih dalam <b>satu invoice</b>.</span>
+                    <span className="flex-grow-1"><i className="bi bi-lightbulb me-1" />Produk ini bisa diuji di {spProduct.lab_test.service} PSU{spProduct.lab_test.price ? <> (paket lengkap SNI {rupiah(spProduct.lab_test.price)}/sampel, belum termasuk PPN)</> : ''}. Pilih paket agar sertifikasi dan uji lab diproses bersama dan ditagih dalam <b>satu proforma invoice</b>.</span>
                     <button type="button" className="btn btn-sm btn-primary" onClick={() => setSp({ ...sp, is_package: true })}>Pilih Paket</button>
                   </div>
                 )}
                 <div className="form-check">
                   <input className="form-check-input" type="checkbox" id="pkg" checked={sp.is_package} onChange={(e) => setSp({ ...sp, is_package: e.target.checked })} />
-                  <label className="form-check-label" htmlFor="pkg"><b>Paket Sertifikasi Produk + Pengujian Laboratorium PSU</b><span className="d-block small text-muted2">Sertifikasi dan uji lab ditagih dalam satu invoice (jumlah sampel = jumlah merek). Surat permohonan pengujian disiapkan oleh Admin PSU. Hasil lab (LHU) ditampilkan pada tahap Pengujian laboratorium.</span></label>
+                  <label className="form-check-label" htmlFor="pkg"><b>Paket Sertifikasi Produk + Pengujian Laboratorium PSU</b><span className="d-block small text-muted2">Sertifikasi dan uji lab ditagih dalam satu proforma invoice (jumlah sampel = jumlah merek). Surat permohonan pengujian disiapkan oleh Admin PSU. Hasil lab (LHU) ditampilkan pada tahap Pengujian laboratorium.</span></label>
                 </div>
               </div>
               {dyn}
@@ -337,13 +386,14 @@ export default function Ajukan() {
 
           {stage === 2 && isLab && (
             <div className="row g-3">
-              {scope.length === 0 && <div className="col-12"><div className="alert alert-light border small mb-0">Daftar parameter untuk layanan ini belum tersedia. Tuliskan parameter yang Anda butuhkan di kolom di bawah; harganya akan dikonfirmasi PSU di invoice.</div></div>}
+              {scope.length === 0 && <div className="col-12"><div className="alert alert-light border small mb-0">Daftar parameter untuk layanan ini belum tersedia. Tuliskan parameter yang Anda butuhkan di kolom di bawah; harganya akan dikonfirmasi PSU di proforma invoice.</div></div>}
               {scope.length === 0 && <F label="Jumlah Sampel" id="lq"><input id="lq" type="number" min={1} className="form-control" value={lab.quantity} onChange={(e) => setLab({ ...lab, quantity: e.target.value })} /></F>}
               {scope.length > 0 && (<>
               <F label="Produk / Bahan yang Diuji" id="lp"><Select id="lp" className="form-select" value={lab.product_id} onChange={(e) => pickProduct(scope.find((p) => p.id === +e.target.value))}>{scope.map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</Select></F>
               <F label="Jumlah Sampel" id="lq"><input id="lq" type="number" min={1} className="form-control" value={lab.quantity} onChange={(e) => setLab({ ...lab, quantity: e.target.value })} /></F>
+              {customProduct && <F label="Nama Produk yang Diuji" id="lcp" req full><input id="lcp" className="form-control" maxLength={120} placeholder="Contoh: Pupuk Organik Cair" value={lab.custom_product} onChange={(e) => setLab({ ...lab, custom_product: e.target.value })} /><div className="form-text">Produk ini di luar lingkup akreditasi KAN. Tuliskan nama produk dan parameter yang dibutuhkan; harga dikonfirmasi PSU di proforma invoice.</div></F>}
               {labProduct?.note && <div className="col-12"><div className="alert alert-light border small mb-0"><i className="bi bi-info-circle me-1" />{labProduct.note}</div></div>}
-              {priceOpt && (
+              {priceOpt && !customProduct && (
                 <div className="col-12">
                   <span className="form-label d-block">Opsi Harga</span>
                   <div className="d-flex flex-wrap gap-2">
@@ -360,7 +410,7 @@ export default function Ajukan() {
                   </div>
                 </div>
               )}
-              <div className="col-12">
+              {!customProduct && <div className="col-12">
                 <span className="form-label d-block">Parameter Uji <span className="fw-normal text-muted2">(harga per sampel{optName ? ` · ${optName}` : ''}, sebelum PPN)</span></span>
                 <div className="d-flex flex-column gap-2 mb-2">
                   <label className={`choice ${lab.full_sni ? 'on' : ''}`}>
@@ -384,10 +434,10 @@ export default function Ajukan() {
                     ))}</tbody>
                   </table>
                 </div>
-              </div>
+              </div>}
               </>)}
               <div className="col-12">
-                <span className="form-label d-block">{scope.length ? 'Parameter Lainnya (Opsional)' : 'Parameter yang Dibutuhkan'}</span>
+                <span className="form-label d-block">{scope.length && !customProduct ? 'Parameter Lainnya (Opsional)' : <>Parameter yang Dibutuhkan <span className="text-danger">*</span></>}</span>
                 <div className="d-flex flex-column gap-2">
                   {lab.custom.map((v, i) => (
                     <div key={i} className="pair-row pair-one">
@@ -397,7 +447,22 @@ export default function Ajukan() {
                   ))}
                 </div>
                 <button type="button" className="btn btn-outline-secondary btn-sm mt-2" disabled={lab.custom.length >= 20} onClick={() => setLab({ ...lab, custom: [...lab.custom, ''] })}><i className="bi bi-plus-lg" />Tambah Parameter</button>
-                <div className="form-text">Harga parameter lainnya dikonfirmasi PSU di invoice.</div>
+                <div className="form-text">Harga parameter lainnya dikonfirmasi PSU di proforma invoice.</div>
+              </div>
+              <div className="col-12">
+                <span className="form-label d-block">Brand / Spesifikasi Produk (Opsional)</span>
+                <div className="d-flex flex-column gap-2">
+                  {lab.specs.map((x, i) => (
+                    <div key={i} className="pair-row">
+                      <span className="pair-no">{i + 1}</span>
+                      <input className="form-control" maxLength={80} placeholder="Brand, mis. SOLUTUS" aria-label={`Brand ${i + 1}`} value={x.brand} onChange={(e) => setSpec(i, 'brand', e.target.value)} />
+                      <input className="form-control" maxLength={80} placeholder="Spesifikasi, mis. NPK 13-8-30" aria-label={`Spesifikasi ${i + 1}`} value={x.spec} onChange={(e) => setSpec(i, 'spec', e.target.value)} />
+                      <button type="button" className="btn btn-outline-danger" aria-label={`Hapus brand ${i + 1}`} disabled={lab.specs.length === 1 && !x.brand && !x.spec} onClick={() => setLab({ ...lab, specs: lab.specs.length === 1 ? [{ brand: '', spec: '' }] : lab.specs.filter((_, k) => k !== i) })}><i className="bi bi-trash" /></button>
+                    </div>
+                  ))}
+                </div>
+                <button type="button" className="btn btn-outline-secondary btn-sm mt-2" disabled={lab.specs.length >= 50} onClick={() => setLab({ ...lab, specs: [...lab.specs, { brand: '', spec: '' }] })}><i className="bi bi-plus-lg" />Tambah Brand / Spesifikasi</button>
+                <div className="form-text">Satu baris untuk satu sampel. Daftar ini dicantumkan bernomor di proforma invoice.</div>
               </div>
               {dyn}
             </div>
@@ -413,7 +478,7 @@ export default function Ajukan() {
                 return (
                   <div key={d.id} className={`doc-row ${file ? 'has-file' : ''}`}>
                     <div className="flex-grow-1 min-w-0"><b>{d.name}</b>{needDoc(d) && <span className="text-danger"> *</span>}
-                      <div className="small text-muted2">{byAdmin ? 'Paket LSPro + Lab: disiapkan oleh Admin PSU (opsional bagi Anda)' : file ? <span style={{ color: 'var(--ok)' }}><i className="bi bi-check-circle-fill me-1" />{file.name}</span> : 'PDF, Word, ZIP, JPG, atau PNG · maks. 10 MB'}</div>
+                      <div className="small text-muted2">{byAdmin ? 'Paket LSPro + Lab: disiapkan oleh Admin PSU (opsional bagi Anda)' : file ? <span style={{ color: 'var(--ok)' }}><i className="bi bi-check-circle-fill me-1" />{file.name}</span> : FILE_HINT}</div>
                       {tpl && <button type="button" className="btn btn-link btn-sm p-0 mt-1" onClick={() => download(`/templates/${tpl.id}/download`, tpl.original_name)}><i className="bi bi-file-earmark-word" />Unduh Template</button>}
                     </div>
                     <input type="file" id={id} className="visually-hidden" accept={FILE_ACCEPT} onChange={(e) => { const [f0] = guard(e.target.files); if (f0) setDocs({ ...docs, [d.name]: f0 }); e.target.value = ''; }} />
@@ -448,10 +513,11 @@ export default function Ajukan() {
                 {code === 'SP' && spProduct && <><dt className="col-sm-3 text-muted2 fw-normal">Produk</dt><dd className="col-sm-9">{spProduct.name} · <span className="mono">{spProduct.standard_no}</span> · {sp.scheme || 'Sesuai Acuan'} · {ORIGINS.find((o) => o[0] === sp.origin)?.[1]}</dd></>}
                 {code === 'SP' && <Row k="Merek & Jenis" v={sp.brands.filter((b) => b.merek.trim()).map((b) => `${b.merek}${b.jenis ? ` · ${b.jenis}` : ''}`).join('; ')} />}
                 {code === 'KAL' && <><dt className="col-sm-3 text-muted2 fw-normal">Alat</dt><dd className="col-sm-9">{kal.name} {kal.brand_model} · {kal.location === 'onsite' ? 'On-site' : 'Di laboratorium'}</dd></>}
-                {isLab && labProduct && <><dt className="col-sm-3 text-muted2 fw-normal">Produk & parameter</dt><dd className="col-sm-9">{labProduct.name}{optName ? ` · ${optName}` : ''} · {lab.full_sni ? 'parameter lengkap sesuai SNI' : labProduct.parameters.filter((p) => lab.params.includes(p.id)).map((p) => p.name).join(', ')}{customParams.length > 0 && ` · lainnya: ${customParams.join(', ')}`}</dd></>}
-                {fields.filter((f) => values[f.key]).map((f) => <Row key={f.key} k={f.label} v={values[f.key]} />)}
+                {isLab && labProduct && <><dt className="col-sm-3 text-muted2 fw-normal">Produk & parameter</dt><dd className="col-sm-9">{customProduct ? `${lab.custom_product} (di luar lingkup KAN)` : labProduct.name}{optName && !customProduct ? ` · ${optName}` : ''} · {lab.full_sni ? 'parameter lengkap sesuai SNI' : labProduct.parameters.filter((p) => lab.params.includes(p.id)).map((p) => p.name).join(', ')}{customParams.length > 0 && ` · lainnya: ${customParams.join(', ')}`}</dd></>}
+                {isLab && labSpecs.length > 0 && <Row k="Brand / Spesifikasi" v={labSpecs.map(specText).join('; ')} />}
+                {fields.filter((f) => (f.type === 'nomor_tanggal' ? filledPairs(values[f.key]).length : values[f.key])).map((f) => <Row key={f.key} k={f.label} v={f.type === 'nomor_tanggal' ? pairText(values[f.key]) : values[f.key]} />)}
                 <dt className="col-sm-3 text-muted2 fw-normal">Dokumen</dt><dd className="col-sm-9">{[...docList.filter((d) => docs[d.name]).map((d) => d.name), ...extraDocs.filter((x) => x.file).map((x) => x.name)].join(', ') || 'Belum ada'}</dd>
-                <dt className="col-sm-3 text-muted2 fw-normal">Tahapan Proses</dt><dd className="col-sm-9">{svc.steps.length} status, mulai {svc.steps[0].status_code}</dd>
+                <dt className="col-sm-3 text-muted2 fw-normal">Tahapan Proses</dt><dd className="col-sm-9">{flowSteps.length} tahap: {flowSteps.map((x) => x.name).join(' → ')}</dd>
               </dl>
               <div className="alert alert-light border small mb-0">Setelah dikirim, sistem membuat <b>nomor pengajuan</b> untuk arsip dan <b>kode lacak</b> acak yang dikirim ke email Anda untuk cek progres tanpa login.</div>
             </>
@@ -481,7 +547,7 @@ export default function Ajukan() {
             {noPrice && <div className="d-flex justify-content-between text-muted2"><span>Parameter belum ada harga</span><span>dikonfirmasi PSU</span></div>}
             <div className="d-flex justify-content-between gap-2 text-muted2"><span>PPN 12% × DPP Nilai Lain</span><span className="num">{rupiah(labPpn)}</span></div>
             <div className="border-top pt-2 d-flex justify-content-between align-items-baseline"><span className="fw-semibold">Estimasi Total</span><span className="big-amount">{rupiah(labEstimate + labPpn)}</span></div>
-            <p className="text-muted2 mb-0">Estimasi Total = harga + PPN. Bila perusahaan Anda memotong PPh 23 (2% dari harga), nilai yang dibayar berkurang sebesar potongan itu. Tagihan resmi dikirim melalui invoice setelah verifikasi.</p>
+            <p className="text-muted2 mb-0">Estimasi Total = harga + PPN. Bila perusahaan Anda memotong PPh 23 (2% dari harga), nilai yang dibayar berkurang sebesar potongan itu. Tagihan resmi dikirim melalui proforma invoice setelah verifikasi.</p>
             {svc?.est_text && <div className="bg-light rounded-3 p-2">Estimasi selesai <b>{code === 'KIM' ? (alt ? '2–3 hari per sampel' : '5–7 hari per sampel') : svc.est_text}</b> setelah sampel diterima.</div>}
           </aside>
         </div>

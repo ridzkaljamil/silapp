@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const { q, one } = require('../config/db');
 const { requireAuth, allow } = require('../middleware/auth');
 const { setSetting, getSettings, INVOICE_KEYS } = require('../utils/settings');
+const { parseMoney } = require('../utils/pricing');
 
 router.use(requireAuth, allow('superadmin'));
 
@@ -87,7 +88,7 @@ router.delete('/users/:id', async (req, res, next) => {
 router.get('/services', async (req, res, next) => {
   try {
     const services = await q('SELECT * FROM services ORDER BY sort_order');
-    const steps = await q('SELECT * FROM service_steps ORDER BY service_id, step_order');
+    const steps = await q('SELECT * FROM service_steps ORDER BY service_id, flow, step_order');
     res.json(services.map((s) => ({ ...s, steps: steps.filter((x) => x.service_id === s.id) })));
   } catch (e) { next(e); }
 });
@@ -144,17 +145,18 @@ router.put('/steps/:id', async (req, res, next) => {
 
 /* ---------- daftar harga lab (Lab Kimia & Lab Fisika): harga utama + opsi kedua (Ekspress / Luar Negeri) ---------- */
 const PRICE_SVC = ['KIM', 'FIS', 'MIK'];
-const money = (v) => (v === '' || v === null || v === undefined ? null : Math.max(0, Math.round(+v)) || 0);
+/** Harga kosong / bukan angka = belum ada harga (null). */
+const money = parseMoney;
 const text = (v, n) => String(v ?? '').trim().slice(0, n);
 const inUse = (e) => e.code === 'ER_ROW_IS_REFERENCED_2' || e.code === 'ER_ROW_IS_REFERENCED';
 
 router.get('/prices', async (req, res, next) => {
   try {
-    const products = await q(`SELECT p.id, p.name, p.category, p.standard_no, p.package_price, p.package_price_alt, p.alt_available, p.note, s.code service_code, s.name service_name
+    const products = await q(`SELECT p.id, p.name, p.category, p.standard_no, p.package_price, p.package_price_alt, p.alt_available, p.note, p.custom_name, s.code service_code, s.name service_name
       FROM products p JOIN services s ON s.id=p.service_id WHERE s.code IN (?) ORDER BY s.sort_order, p.id`, [PRICE_SVC]);
     const params = await q(`SELECT pp.id, pp.product_id, pp.name, pp.method, pp.price, pp.price_alt FROM product_parameters pp
       JOIN products p ON p.id=pp.product_id JOIN services s ON s.id=p.service_id WHERE s.code IN (?) ORDER BY pp.id`, [PRICE_SVC]);
-    res.json(products.map((p) => ({ ...p, alt_available: !!p.alt_available, parameters: params.filter((x) => x.product_id === p.id) })));
+    res.json(products.map((p) => ({ ...p, alt_available: !!p.alt_available, custom_name: !!p.custom_name, parameters: params.filter((x) => x.product_id === p.id) })));
   } catch (e) { next(e); }
 });
 
@@ -174,7 +176,7 @@ async function saveParams(productId, list = []) {
     else await q('INSERT INTO product_parameters (product_id, name, method, price, price_alt) VALUES (?,?,?,?,?)', [productId, name, text(p.method, 160) || null, money(p.price), money(p.price_alt)]);
   }
 }
-const productBody = (b) => [text(b.name, 160), text(b.standard_no, 80) || null, money(b.package_price), money(b.package_price_alt), b.alt_available === false ? 0 : 1, text(b.note, 255) || null];
+const productBody = (b) => [text(b.name, 160), text(b.standard_no, 80) || null, money(b.package_price), money(b.package_price_alt), b.alt_available === false ? 0 : 1, text(b.note, 255) || null, b.custom_name ? 1 : 0];
 
 router.post('/prices/products', async (req, res, next) => {
   try {
@@ -182,8 +184,8 @@ router.post('/prices/products', async (req, res, next) => {
     const svc = await one('SELECT id FROM services WHERE code=? AND code IN (?)', [b.service_code, PRICE_SVC]);
     if (!svc) return res.status(400).json({ message: 'Pilih laboratorium yang valid.' });
     if (!text(b.name, 160)) return res.status(400).json({ message: 'Nama produk wajib diisi.' });
-    if (!(b.parameters || []).some((p) => text(p.name, 160))) return res.status(400).json({ message: 'Tambahkan minimal satu parameter uji.' });
-    const r = await q('INSERT INTO products (service_id, category, name, standard_no, package_price, package_price_alt, alt_available, note) VALUES (?,?,?,?,?,?,?,?)',
+    if (!b.custom_name && !(b.parameters || []).some((p) => text(p.name, 160))) return res.status(400).json({ message: 'Tambahkan minimal satu parameter uji.' });
+    const r = await q('INSERT INTO products (service_id, category, name, standard_no, package_price, package_price_alt, alt_available, note, custom_name) VALUES (?,?,?,?,?,?,?,?,?)',
       [svc.id, 'Uji SNI', ...productBody(b)]);
     await saveParams(r.insertId, b.parameters);
     res.status(201).json({ id: r.insertId });
@@ -195,7 +197,7 @@ router.put('/prices/products/:id', async (req, res, next) => {
     const prod = await one('SELECT p.id FROM products p JOIN services s ON s.id=p.service_id WHERE p.id=? AND s.code IN (?)', [req.params.id, PRICE_SVC]);
     if (!prod) return res.status(404).json({ message: 'Produk lab tidak ditemukan.' });
     if (!text(req.body.name, 160)) return res.status(400).json({ message: 'Nama produk wajib diisi.' });
-    await q('UPDATE products SET name=?, standard_no=?, package_price=?, package_price_alt=?, alt_available=?, note=? WHERE id=?', [...productBody(req.body), prod.id]);
+    await q('UPDATE products SET name=?, standard_no=?, package_price=?, package_price_alt=?, alt_available=?, note=?, custom_name=? WHERE id=?', [...productBody(req.body), prod.id]);
     await saveParams(prod.id, req.body.parameters);
     res.json({ ok: true });
   } catch (e) { if (e.status) return res.status(e.status).json({ message: e.message }); next(e); }
@@ -265,7 +267,19 @@ router.delete('/scope/item/:id', async (req, res, next) => {
 });
 
 /* ---------- form builder: isian & berkas per layanan ---------- */
-const TYPES = ['text', 'number', 'textarea', 'select', 'date'];
+const TYPES = ['text', 'number', 'textarea', 'select', 'date', 'nomor_tanggal'];
+/** Tipe skema sertifikasi yang ada di ruang lingkup SP (mis. Tipe 1b, Tipe 4, Tipe 5). */
+async function schemeTypes() {
+  const rows = await q("SELECT DISTINCT p.scheme_types t FROM products p JOIN services s ON s.id=p.service_id WHERE s.code='SP' AND p.scheme_types IS NOT NULL");
+  const set = new Map();
+  for (const r of rows) for (const t of r.t.split('/').map((x) => x.trim()).filter(Boolean)) set.set(t.toLowerCase(), set.get(t.toLowerCase()) || t);
+  return [...set.values()].sort((a, b) => a.localeCompare(b, 'id', { numeric: true }));
+}
+/** hide_schemes: hanya tipe skema yang dikenal, dipisah koma. */
+const hideSchemes = (list, known) => {
+  const ok = (Array.isArray(list) ? list : String(list || '').split(',')).map((x) => String(x).trim()).filter((x) => known.some((k) => k.toLowerCase() === x.toLowerCase()));
+  return ok.length ? ok.join(', ').slice(0, 160) : null;
+};
 const svcByCode = (code) => one('SELECT id, code, name FROM services WHERE code=? AND bidang IS NOT NULL', [code]);
 
 router.get('/forms/:code', async (req, res, next) => {
@@ -276,6 +290,7 @@ router.get('/forms/:code', async (req, res, next) => {
       service: svc,
       fields: await q('SELECT * FROM service_fields WHERE service_id=? ORDER BY sort_order, id', [svc.id]),
       documents: await q('SELECT * FROM service_documents WHERE service_id=? ORDER BY sort_order, id', [svc.id]),
+      schemes: svc.code === 'SP' ? await schemeTypes() : [],
     });
   } catch (e) { next(e); }
 });
@@ -285,7 +300,8 @@ function fieldBody(b) {
   const type = TYPES.includes(b.type) ? b.type : 'text';
   const options = type === 'select' ? String(b.options || '').split(',').map((x) => x.trim()).filter(Boolean).join(', ') : null;
   if (type === 'select' && !options) return [null, 'Isi pilihan untuk tipe pilihan (pisahkan dengan koma).'];
-  return [{ label: b.label.trim().slice(0, 120), type, options, required: b.required ? 1 : 0, show_when: b.show_when === '1B' ? '1B' : null, is_active: b.is_active === false ? 0 : 1, sort_order: +b.sort_order || 0 }];
+  return [{ label: b.label.trim().slice(0, 120), type, options, required: b.required ? 1 : 0, show_when: b.show_when === '1B' ? '1B' : null, is_active: b.is_active === false ? 0 : 1, sort_order: +b.sort_order || 0,
+    multiple: type === 'nomor_tanggal' && b.multiple ? 1 : 0 }];
 }
 
 router.post('/forms/:code/fields', async (req, res, next) => {
@@ -297,8 +313,8 @@ router.post('/forms/:code/fields', async (req, res, next) => {
     let key = f.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, '').slice(0, 50) || 'isian';
     while (await one('SELECT id FROM service_fields WHERE service_id=? AND field_key=?', [svc.id, key])) key += '_2';
     const max = await one('SELECT COALESCE(MAX(sort_order),0)+1 n FROM service_fields WHERE service_id=?', [svc.id]);
-    await q('INSERT INTO service_fields (service_id, field_key, label, type, options, required, show_when, sort_order, is_active) VALUES (?,?,?,?,?,?,?,?,?)',
-      [svc.id, key, f.label, f.type, f.options, f.required, f.show_when, req.body.sort_order ? f.sort_order : max.n, f.is_active]);
+    await q('INSERT INTO service_fields (service_id, field_key, label, type, options, required, show_when, multiple, sort_order, is_active) VALUES (?,?,?,?,?,?,?,?,?,?)',
+      [svc.id, key, f.label, f.type, f.options, f.required, f.show_when, f.multiple, req.body.sort_order ? f.sort_order : max.n, f.is_active]);
     res.status(201).json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -307,8 +323,8 @@ router.put('/fields/:id', async (req, res, next) => {
   try {
     const [f, err] = fieldBody(req.body);
     if (err) return res.status(400).json({ message: err });
-    await q('UPDATE service_fields SET label=?, type=?, options=?, required=?, show_when=?, sort_order=?, is_active=? WHERE id=?',
-      [f.label, f.type, f.options, f.required, f.show_when, f.sort_order, f.is_active, req.params.id]);
+    await q('UPDATE service_fields SET label=?, type=?, options=?, required=?, show_when=?, multiple=?, sort_order=?, is_active=? WHERE id=?',
+      [f.label, f.type, f.options, f.required, f.show_when, f.multiple, f.sort_order, f.is_active, req.params.id]);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -337,8 +353,9 @@ router.post('/forms/:code/documents', async (req, res, next) => {
     if (!svc) return res.status(404).json({ message: 'Layanan tidak ditemukan.' });
     if (!req.body.name?.trim()) return res.status(400).json({ message: 'Nama berkas wajib diisi.' });
     const max = await one('SELECT COALESCE(MAX(sort_order),0)+1 n FROM service_documents WHERE service_id=?', [svc.id]);
-    await q('INSERT INTO service_documents (service_id, name, required, admin_if_package, show_when, sort_order) VALUES (?,?,?,?,?,?)',
-      [svc.id, req.body.name.trim().slice(0, 120), req.body.required ? 1 : 0, svc.code === 'SP' && req.body.admin_if_package ? 1 : 0, svc.code === 'SP' && req.body.show_when === 'SURV' ? 'SURV' : null, max.n]);
+    const hide = svc.code === 'SP' ? hideSchemes(req.body.hide_schemes, await schemeTypes()) : null;
+    await q('INSERT INTO service_documents (service_id, name, required, admin_if_package, show_when, hide_schemes, sort_order) VALUES (?,?,?,?,?,?,?)',
+      [svc.id, req.body.name.trim().slice(0, 120), req.body.required ? 1 : 0, svc.code === 'SP' && req.body.admin_if_package ? 1 : 0, svc.code === 'SP' && req.body.show_when === 'SURV' ? 'SURV' : null, hide, max.n]);
     res.status(201).json({ ok: true });
   } catch (e) { next(e); }
 });
@@ -346,8 +363,11 @@ router.post('/forms/:code/documents', async (req, res, next) => {
 router.put('/documents/:id', async (req, res, next) => {
   try {
     if (!req.body.name?.trim()) return res.status(400).json({ message: 'Nama berkas wajib diisi.' });
-    await q('UPDATE service_documents SET name=?, required=?, admin_if_package=?, show_when=?, sort_order=?, is_active=? WHERE id=?',
-      [req.body.name.trim().slice(0, 120), req.body.required ? 1 : 0, req.body.admin_if_package ? 1 : 0, req.body.show_when === 'SURV' ? 'SURV' : null, +req.body.sort_order || 0, req.body.is_active === false ? 0 : 1, req.params.id]);
+    const doc = await one('SELECT d.id, s.code FROM service_documents d JOIN services s ON s.id=d.service_id WHERE d.id=?', [req.params.id]);
+    if (!doc) return res.status(404).json({ message: 'Berkas tidak ditemukan.' });
+    const hide = doc.code === 'SP' ? hideSchemes(req.body.hide_schemes, await schemeTypes()) : null;
+    await q('UPDATE service_documents SET name=?, required=?, admin_if_package=?, show_when=?, hide_schemes=?, sort_order=?, is_active=? WHERE id=?',
+      [req.body.name.trim().slice(0, 120), req.body.required ? 1 : 0, req.body.admin_if_package ? 1 : 0, req.body.show_when === 'SURV' ? 'SURV' : null, hide, +req.body.sort_order || 0, req.body.is_active === false ? 0 : 1, req.params.id]);
     res.json({ ok: true });
   } catch (e) { next(e); }
 });

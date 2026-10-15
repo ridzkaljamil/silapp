@@ -7,7 +7,7 @@ import 'bootstrap-icons/font/bootstrap-icons.css';
 import './styles/theme.css';
 
 import { AuthProvider } from './AuthContext';
-import { ToastProvider, ConfirmProvider } from './components/ui';
+import { ToastProvider, ConfirmProvider, BusyOverlay } from './components/ui';
 import App from './App';
 
 ReactDOM.createRoot(document.getElementById('root')).render(
@@ -18,6 +18,7 @@ ReactDOM.createRoot(document.getElementById('root')).render(
           <BrowserRouter>
             <App />
           </BrowserRouter>
+          <BusyOverlay />
         </ConfirmProvider>
       </ToastProvider>
     </AuthProvider>

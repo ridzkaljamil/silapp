@@ -28,11 +28,11 @@ async function sendMail(to, subject, body, attachments = []) {
     console.log(`[email-simulasi] ke=${to} | ${subject}\n${text}${att}\n`);
     return;
   }
-  try {
-    await transporter.sendMail({ from: process.env.MAIL_FROM, to, subject, text, attachments });
-  } catch (e) {
-    console.error('[email] gagal mengirim:', e.message);
-  }
+  // Pengiriman SMTP bisa makan 1–3 detik: di server biasa email dikirim di latar belakang agar aksi pengguna
+  // langsung selesai. Di serverless (Vercel) proses berhenti setelah respons terkirim, jadi tetap ditunggu.
+  const job = transporter.sendMail({ from: process.env.MAIL_FROM, to, subject, text, attachments })
+    .catch((e) => console.error('[email] gagal mengirim:', e.message));
+  if (process.env.VERCEL) await job;
 }
 
 module.exports = { sendMail };

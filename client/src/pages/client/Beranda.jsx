@@ -4,7 +4,7 @@ import { Link } from 'react-router-dom';
 import api from '../../api';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import { useAuth } from '../../AuthContext';
-import { Loading, rupiah, fmtDate } from '../../components/ui';
+import { Loading, rupiah, fmtDate, useConfirm } from '../../components/ui';
 import AppTable from '../../components/AppTable';
 import { docWord } from '../../lib/constants';
 import { useContact, waLink } from '../../lib/contact';
@@ -18,13 +18,17 @@ export default function Beranda() {
   const [tab, setTab] = useState('jalan');
   const [draft, setDraft] = useState(null);
   const contact = useContact();
+  const confirm = useConfirm();
   const load = useCallback(() => api.get('/applications').then((r) => setRows(r.data)), []);
   useEffect(() => {
     load();
     api.get('/drafts').then((r) => setDraft(r.data)).catch(() => {});
   }, [load]);
   useLiveRefresh(load);
-  const discard = () => api.delete('/drafts').then(() => setDraft(null)).catch(() => {});
+  const discard = async () => {
+    if (!(await confirm({ title: 'Hapus Draft?', body: 'Isian pengajuan yang tersimpan akan dihapus dan tidak dapat dikembalikan.', ok: 'Hapus Draft', danger: true, icon: 'trash' }))) return;
+    api.delete('/drafts').then(() => setDraft(null)).catch(() => {});
+  };
   if (!rows) return <Loading />;
   const todo = rows.flatMap((a) => {
     const name = a.product_label.split(' · ')[0];
@@ -35,7 +39,7 @@ export default function Beranda() {
       const left = n < 0 ? `terlambat ${-n} hari` : `sisa ${n} hari`;
       return [{ a, ic: 'clock-history', cls: 'ic-warn', pill: ['pill-action', `Temuan audit · ${left}`], t: 'Kirim bukti perbaikan temuan', s: meta, m: <>{name} · tenggat {fmtDate(a.finding_due)} · <b className="text-warn">{left}</b></> }];
     }
-    if (a.condition === 'Waiting for Payment' && a.payment_status === 'invoice') return [{ a, ic: 'credit-card', cls: 'ic-info', pill: ['pill-progress', `Invoice · ${rupiah(a.pay_amount)}`], t: 'Bayar dan unggah bukti transfer', s: meta, m: `${name} · ${rupiah(a.pay_amount)}` }];
+    if (a.condition === 'Waiting for Payment' && a.payment_status === 'invoice') return [{ a, ic: 'credit-card', cls: 'ic-info', pill: ['pill-progress', `Proforma Invoice · ${rupiah(a.pay_amount)}`], t: 'Bayar dan unggah bukti transfer', s: meta, m: `${name} · ${rupiah(a.pay_amount)}` }];
     if (a.status === 'selesai' && !a.survey_done) return [{ a, ic: 'download', cls: 'ic-ok', pill: ['pill-done', `${docWord(a.service_code, true)} terbit`], t: 'Isi survei & unduh dokumen', s: meta, m: `${name} · dokumen telah terbit` }];
     return [];
   });

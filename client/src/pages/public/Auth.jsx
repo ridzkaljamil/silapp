@@ -4,6 +4,7 @@ import { useAuth, homeOf } from "../../AuthContext";
 import api, { errMsg } from "../../api";
 import { useContact, waLink } from "../../lib/contact";
 import { SideDeco } from "../../components/Layouts";
+import { useConfirm } from "../../components/feedback";
 
 function Shell({ title, children }) {
   return (
@@ -68,7 +69,7 @@ export function Login() {
           </div>
           <h1>Pantau sertifikasi dan pengujian produk Anda dalam satu tempat.</h1>
           <ul className="list-unstyled d-flex flex-column gap-3 mb-0 hide-sm2 auth-checks">
-            {["Status setiap tahap, terkini", "Invoice, temuan, dan dokumen terkumpul rapi", "Sertifikat & LHU siap diunduh"].map((t) => (
+            {["Status setiap tahap, terkini", "Proforma invoice, temuan, dan dokumen terkumpul rapi", "Sertifikat & LHU siap diunduh"].map((t) => (
               <li key={t} className="d-flex gap-3 align-items-center">
                 <span className="ck">
                   <i className="bi bi-check-lg" aria-hidden="true" />
@@ -136,6 +137,7 @@ export function Login() {
 export function GantiSandi() {
   const { user, setSessionUser } = useAuth();
   const nav = useNavigate();
+  const ask = useConfirm();
   const [f, setF] = useState({ old_password: "", new_password: "", confirm: "" });
   const [err, setErr] = useState("");
   const [ok, setOk] = useState(false);
@@ -145,6 +147,7 @@ export function GantiSandi() {
     e.preventDefault();
     setErr("");
     if (f.new_password !== f.confirm) return setErr("Konfirmasi kata sandi baru tidak sama.");
+    if (!(await ask({ title: "Ganti Kata Sandi?", body: "Gunakan kata sandi baru ini saat masuk berikutnya.", ok: "Ya, Ganti", icon: "key" }))) return null;
     try {
       const r = await api.post("/auth/change-password", f);
       setSessionUser(r.data.user);

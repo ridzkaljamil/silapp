@@ -7,7 +7,7 @@ SILAPP digunakan pelanggan untuk mengajukan layanan dan memantau status pengajua
 ## Fitur
 
 - **Publik:** lacak status pengajuan dengan kode lacak (tanpa login) dan informasi layanan beserta ruang lingkupnya.
-- **Pelanggan:** mengajukan layanan, mengunduh template dokumen, membatalkan pengajuan yang belum diproses lalu mengajukan ulang, mengunggah dokumen dan bukti bayar, mengunduh invoice PDF, membalas permintaan tindakan atau temuan, mengunduh sertifikat/LHU, mengisi survei kepuasan, dan melihat Directory sertifikat.
+- **Pelanggan:** mengajukan layanan, mengunduh template dokumen, membatalkan pengajuan yang belum diproses lalu mengajukan ulang, mengunggah dokumen dan bukti bayar, mengunduh proforma invoice PDF, membalas permintaan tindakan atau temuan, mengunduh sertifikat/LHU, mengisi survei kepuasan, dan melihat Directory sertifikat.
 - **Admin:** antrean pengajuan per bidang, persetujuan tiap tahap, invoice, verifikasi pembayaran, riwayat per tahap, temuan audit, parameter uji lab, akun pelanggan, dan dashboard.
 - **Super Admin:** semua fitur Admin, ditambah pengguna internal, Kelola Layanan (detail & tahapan, form pengajuan, ruang lingkup & harga, identitas invoice dan kontak), template dokumen, survei, serta data sertifikat. Rekap survei kepuasan per layanan bisa diberi catatan tindak lanjut dan diekspor ke Excel/CSV.
 - Notifikasi di aplikasi dan lewat email, pengaturan akun dengan foto profil, dan tampilan responsif untuk HP.

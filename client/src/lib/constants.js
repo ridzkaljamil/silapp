@@ -21,7 +21,6 @@ export const PRICE_OPTIONS = { KIM: ['Reguler', 'Ekspress'], FIS: ['Dalam Negeri
 /** Layanan per bidang (untuk filter daftar pengajuan). */
 export const SERVICES = { SP: 'Sertifikasi Produk', KIM: 'Lab Kimia', FIS: 'Lab Fisika', MIK: 'Lab Mikrobiologi', KAL: 'Lab Kalibrasi' };
 export const SERVICE_BIDANG = { SP: ['SP'], LAB: ['KIM', 'FIS', 'MIK'], KAL: ['KAL'] };
-/** Kondisi pengajuan (nilai kolom status) untuk filter. */
 /** Filter kondisi pengajuan (nilai = kondisi yang tampil di status pill). */
 export const CONDITIONS = [['berjalan', 'Semua yang Berjalan'], ['On Progress', 'On Progress'], ['Action Required', 'Action Required'],
   ['Waiting for Payment', 'Waiting for Payment'], ['Waiting for Sample', 'Waiting for Sample'], ['Scheduling', 'Scheduling'],

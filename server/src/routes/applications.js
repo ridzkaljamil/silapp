@@ -12,6 +12,7 @@ const { sendInvoicePdf } = require('../services/invoice');
 const { PRICE_OPTIONS } = require('../utils/pricing');
 const { getSettings } = require('../utils/settings');
 const { notifyStaff } = require('../services/notifications');
+const { readPairs, formatPairs, parsePairs, hiddenFor } = require('../utils/fields');
 
 router.use(requireAuth, allow('user'));
 
@@ -60,7 +61,9 @@ router.get('/:id/prefill', async (req, res, next) => {
     const app = await ownApp(req);
     const details = await q('SELECT field_key, field_value FROM application_details WHERE application_id=?', [app.id]);
     const val = (k) => details.find((d) => d.field_key === k)?.field_value || '';
-    const values = Object.fromEntries(details.filter((d) => !['merek_jenis', 'pernyataan_surveillance', 'kode_sampel'].includes(d.field_key)).map((d) => [d.field_key, d.field_value]));
+    const pairKeys = new Set((await q("SELECT field_key FROM service_fields WHERE service_id=? AND type='nomor_tanggal'", [app.service_id])).map((f) => f.field_key));
+    const values = Object.fromEntries(details.filter((d) => !['merek_jenis', 'pernyataan_surveillance', 'kode_sampel', 'nama_produk', 'merek_spesifikasi'].includes(d.field_key))
+      .map((d) => [d.field_key, pairKeys.has(d.field_key) ? parsePairs(d.field_value) : d.field_value]));
     const payload = { values };
     if (app.service_code === 'SP') {
       const prod = app.product_id ? await one('SELECT category FROM products WHERE id=?', [app.product_id]) : null;
@@ -77,7 +80,10 @@ router.get('/:id/prefill', async (req, res, next) => {
       const params = await q('SELECT parameter_id, name, is_custom FROM application_parameters WHERE application_id=? ORDER BY id', [app.id]);
       const sample = await one('SELECT quantity FROM samples WHERE application_id=? LIMIT 1', [app.id]);
       const custom = params.filter((p) => p.is_custom).map((p) => p.name);
-      payload.lab = { product_id: app.product_id || '', quantity: sample?.quantity || 1, full_sni: !!app.full_sni, option: app.price_option || 'std',
+      const specs = val('merek_spesifikasi').split('\n').map((l) => l.replace(/^\d+\.\s*/, '')).filter(Boolean)
+        .map((l) => { const [brand, ...rest] = l.split(' / '); return { brand: brand.trim(), spec: rest.join(' / ').trim() }; });
+      payload.lab = { product_id: app.product_id || '', quantity: sample?.quantity || 1, full_sni: !!app.full_sni, option: app.price_option || 'std', custom_product: val('nama_produk'),
+        specs: specs.length ? specs : [{ brand: '', spec: '' }],
         params: app.full_sni ? [] : params.filter((p) => !p.is_custom && p.parameter_id).map((p) => p.parameter_id), custom: custom.length ? custom : [''] };
     }
     res.json({ service_code: app.service_code, stage: 2, payload });
@@ -106,6 +112,12 @@ async function canCancel(app) {
  */
 /** Pengajuan aktif milik pelanggan yang sama untuk produk (atau alat kalibrasi) yang sama. */
 async function findDuplicate(userId, svc, product, data) {
+  if (product?.custom_name) {
+    // produk di luar lingkup KAN: satu produk umum dipakai banyak nama produk, jadi bandingkan nama yang ditulis pelanggan
+    if (!data.custom_product) return null;
+    return one(`SELECT a.id, a.application_no, a.product_label FROM applications a JOIN application_details d ON d.application_id=a.id AND d.field_key='nama_produk'
+      WHERE a.user_id=? AND a.service_id=? AND a.status IN ('aktif','aksi') AND d.field_value=? ORDER BY a.id DESC LIMIT 1`, [userId, svc.id, data.custom_product]);
+  }
   if (product) {
     return one(`SELECT id, application_no, product_label FROM applications WHERE user_id=? AND service_id=? AND product_id=? AND status IN ('aktif','aksi')
       ORDER BY id DESC LIMIT 1`, [userId, svc.id, product.id]);
@@ -138,10 +150,19 @@ router.post('/', upload.array('documents', 20), async (req, res, next) => {
     const is1B = /1b/i.test(data.scheme || '');
     const isPackage = svc.code === 'SP' && !!data.is_package;
     const values = data.fields || {};
+    const fieldText = {};
     for (const f of fieldDefs) {
       if (f.show_when === '1B' && !is1B) continue;
-      if (f.required && !String(values[f.field_key] ?? '').trim()) return res.status(400).json({ message: `${f.label} wajib diisi.` });
+      if (f.type === 'nomor_tanggal') {
+        const r = readPairs(values[f.field_key], { label: f.label, required: !!f.required, multiple: !!f.multiple });
+        if (r.error) return res.status(400).json({ message: r.error });
+        fieldText[f.field_key] = formatPairs(r.rows);
+        continue;
+      }
+      fieldText[f.field_key] = String(values[f.field_key] ?? '').trim();
+      if (f.required && !fieldText[f.field_key]) return res.status(400).json({ message: `${f.label} wajib diisi.` });
     }
+    if (['SP', 'KAL'].includes(svc.code)) data.specs = []; // brand/spesifikasi hanya untuk layanan lab
     const types = String(data.application_type || '').split(',').map((x) => x.trim()).filter(Boolean);
     const surveillance = svc.code === 'SP' && types.includes('Surveillance');
     if (svc.code === 'SP' && !types.length) return res.status(400).json({ message: 'Pilih jenis permohonan.' });
@@ -150,6 +171,7 @@ router.post('/', upload.array('documents', 20), async (req, res, next) => {
     if (svc.code === 'SP' && (!brands.length || brands.some((b) => !b.merek))) return res.status(400).json({ message: 'Isi minimal satu Merek beserta Jenisnya.' });
     for (const d of docDefs) {
       if (d.show_when === 'SURV' && !surveillance) continue;
+      if (svc.code === 'SP' && hiddenFor(d.hide_schemes, data.scheme)) continue;
       if (d.required && !(d.admin_if_package && isPackage) && !docTypes.includes(d.name)) return res.status(400).json({ message: `Berkas "${d.name}" wajib diunggah.` });
     }
 
@@ -172,6 +194,13 @@ router.post('/', upload.array('documents', 20), async (req, res, next) => {
       if (!data.equipment.name) return res.status(400).json({ message: 'Nama alat wajib diisi.' });
       label = `${data.equipment.name}${data.equipment.brand_model ? ' ' + data.equipment.brand_model : ''}${data.location === 'onsite' ? ' · on-site' : ''}`;
     } else {
+      // produk di luar lingkup akreditasi KAN: pelanggan menulis nama produknya sendiri
+      data.custom_product = product?.custom_name ? String(data.custom_product || '').trim().slice(0, 120) : '';
+      if (product?.custom_name && !data.custom_product) return res.status(400).json({ message: 'Tuliskan nama produk yang akan diuji.' });
+      if (data.custom_product) data.sample = { ...data.sample, description: data.custom_product };
+      // brand / spesifikasi produk (opsional): dicetak bernomor di kolom pekerjaan proforma invoice lab
+      data.specs = (Array.isArray(data.specs) ? data.specs : []).slice(0, 50)
+        .map((x) => [String(x?.brand || '').trim().slice(0, 80), String(x?.spec || '').trim().slice(0, 80)].filter(Boolean).join(' / ')).filter(Boolean);
       data.custom_params = (data.custom_params || []).map((x) => String(x).trim()).filter(Boolean).slice(0, 20);
       data.sample = { description: String(data.sample?.description || '').trim().slice(0, 160), quantity: qty(data.sample?.quantity) };
       if (!data.sample.quantity) return res.status(400).json({ message: 'Jumlah sampel harus 1–999.' });
@@ -184,7 +213,7 @@ router.post('/', upload.array('documents', 20), async (req, res, next) => {
       }
       if (!data.full_sni && !data.parameter_ids?.length && !data.custom_params.length) return res.status(400).json({ message: 'Pilih minimal satu parameter uji.' });
       if (data.full_sni && !product) return res.status(400).json({ message: 'Pilih produk untuk parameter lengkap sesuai SNI.' });
-      label = `${product ? product.name : data.sample.description || 'Sampel'} (${data.sample.quantity} sampel)`;
+      label = `${data.custom_product ? `${data.custom_product} · di luar lingkup KAN` : product ? product.name : data.sample.description || 'Sampel'} (${data.sample.quantity} sampel)`;
     }
     // opsi harga lab: Reguler/Ekspress (Kimia) atau Dalam/Luar Negeri (Fisika).
     // Harga opsi kedua yang kosong memakai harga utama; biaya tambahan Ekspress dikonfirmasi PSU di invoice.
@@ -192,6 +221,9 @@ router.post('/', upload.array('documents', 20), async (req, res, next) => {
     if (priceOption === 'alt' && product && !product.alt_available) {
       return res.status(400).json({ message: `${PRICE_OPTIONS[svc.code][1]} belum tersedia untuk ${product.name}.` });
     }
+
+    // harga paket lengkap SNI dikunci saat diajukan, sama seperti harga per parameter (price_snapshot)
+    const pkgSnapshot = data.full_sni && product ? ((priceOption === 'alt' ? product.package_price_alt ?? product.package_price : product.package_price) ?? null) : null;
 
     // pengajuan ganda: produk/alat yang sama masih berjalan → minta konfirmasi pelanggan dulu
     if (!data.confirm_duplicate) {
@@ -202,6 +234,7 @@ router.post('/', upload.array('documents', 20), async (req, res, next) => {
     // nomor pengajuan PSU-SP-2610-0003: bulan (waktu lokal server) + urutan per layanan; dicoba ulang bila bentrok
     const now = new Date();
     const ym = `${String(now.getFullYear()).slice(2)}${String(now.getMonth() + 1).padStart(2, '0')}`;
+    const flow = await wf.flowFor(svc.id, svc.code, data.scheme);
     let appId; let appNo; let code;
     for (let attempt = 0; !appId; attempt++) {
       const last = await one("SELECT COALESCE(MAX(CAST(SUBSTRING_INDEX(application_no,'-',-1) AS UNSIGNED)),0) n FROM applications WHERE service_id=?", [svc.id]);
@@ -209,17 +242,24 @@ router.post('/', upload.array('documents', 20), async (req, res, next) => {
       code = `SLP${String(now.getFullYear()).slice(2)}-${rand(8)}`;
       try {
         const r = await q(
-          `INSERT INTO applications (application_no, tracking_code, user_id, service_id, product_id, product_label, application_type, scheme, origin, location, is_package, full_sni, price_option)
-           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-          [appNo, code, req.user.id, svc.id, product ? product.id : null, label.slice(0, 255), types.join(', ').slice(0, 80) || null, data.scheme || null, svc.code === 'SP' ? data.origin : null,
-            svc.code === 'KAL' ? (data.location === 'onsite' ? 'onsite' : 'lab') : null, isPackage ? 1 : 0, data.full_sni ? 1 : 0, priceOption]);
+          `INSERT INTO applications (application_no, tracking_code, user_id, service_id, product_id, product_label, application_type, scheme, origin, location, is_package, full_sni, package_snapshot, price_option, flow)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          [appNo, code, req.user.id, svc.id, product ? product.id : null, label.slice(0, 255), types.join(', ').slice(0, 80) || null, svc.code === 'SP' ? data.scheme || null : null, svc.code === 'SP' ? data.origin : null,
+            svc.code === 'KAL' ? (data.location === 'onsite' ? 'onsite' : 'lab') : null, isPackage ? 1 : 0, data.full_sni ? 1 : 0, pkgSnapshot, priceOption, flow]);
         appId = r.insertId;
       } catch (e) { if (e.code !== 'ER_DUP_ENTRY' || attempt >= 4) throw e; }
     }
 
+    if (data.custom_product) {
+      await q('INSERT INTO application_details (application_id, field_key, field_label, field_value) VALUES (?,?,?,?)', [appId, 'nama_produk', 'Nama Produk (di luar lingkup KAN)', data.custom_product]);
+    }
+    if (data.specs?.length) {
+      await q('INSERT INTO application_details (application_id, field_key, field_label, field_value) VALUES (?,?,?,?)',
+        [appId, 'merek_spesifikasi', 'Brand / Spesifikasi Produk', data.specs.map((x, i) => `${i + 1}. ${x}`).join('\n')]);
+    }
     for (const f of fieldDefs) {
       if (f.show_when === '1B' && !is1B) continue;
-      const v = String(values[f.field_key] ?? '').trim();
+      const v = fieldText[f.field_key];
       if (v) await q('INSERT INTO application_details (application_id, field_key, field_label, field_value) VALUES (?,?,?,?)', [appId, f.field_key, f.label, v.slice(0, 500)]);
     }
     if (brands.length) {
@@ -241,7 +281,7 @@ router.post('/', upload.array('documents', 20), async (req, res, next) => {
       await q('INSERT INTO application_parameters (application_id, name, is_custom) VALUES (?,?,1)', [appId, name.slice(0, 160)]);
     }
     if (svc.code !== 'SP' && svc.code !== 'KAL') {
-      await q('INSERT INTO samples (application_id, description, quantity) VALUES (?,?,?)', [appId, product ? product.name : data.sample.description || 'Sampel', data.sample.quantity]);
+      await q('INSERT INTO samples (application_id, description, quantity) VALUES (?,?,?)', [appId, data.custom_product || product?.name || data.sample.description || 'Sampel', data.sample.quantity]);
     }
     if (svc.code === 'KAL') {
       const e = data.equipment;
@@ -310,15 +350,16 @@ router.get('/:id/payment-proof', async (req, res, next) => {
 router.post('/:id/findings/:fid/reply', upload.array('documents', 5), async (req, res, next) => {
   try {
     const app = await ownApp(req);
-    await wf.customerFindingReply(app, req.user, +req.params.fid, req.body.note, req.files);
+    const b = req.body;
+    await wf.customerFindingReply(app, req.user, +req.params.fid, { note: b.note, correction: b.correction, rootCause: b.root_cause, correctiveAction: b.corrective_action }, req.files);
     res.json(await custDetail(app.id));
   } catch (e) { next(e); }
 });
 
-router.post('/:id/findings/:fid/extension', async (req, res, next) => {
+router.post('/:id/findings/:fid/extension', upload.array('documents', 5), async (req, res, next) => {
   try {
     const app = await ownApp(req);
-    await wf.customerExtension(app, req.user, +req.params.fid, req.body.reason);
+    await wf.customerExtension(app, req.user, +req.params.fid, String(req.body.reason || '').trim(), req.files);
     res.json(await custDetail(app.id));
   } catch (e) { next(e); }
 });

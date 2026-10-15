@@ -9,13 +9,13 @@ const crypto = require('crypto');
 const multer = require('multer');
 const { q, one } = require('../config/db');
 const { requireAuth, allow } = require('../middleware/auth');
-const { UPLOAD_DIR } = require('../utils/upload');
+const { UPLOAD_DIR, fixName } = require('../utils/upload');
 
 const WORD = ['.doc', '.docx'];
 const upload = multer({
   storage: multer.diskStorage({
     destination: UPLOAD_DIR,
-    filename: (req, file, cb) => cb(null, `template-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${path.extname(file.originalname).toLowerCase()}`),
+    filename: (req, file, cb) => { fixName(file); cb(null, `template-${Date.now()}-${crypto.randomBytes(4).toString('hex')}${path.extname(file.originalname).toLowerCase()}`); },
   }),
   limits: { fileSize: 10 * 1024 * 1024 },
   fileFilter: (req, file, cb) => {

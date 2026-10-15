@@ -1,15 +1,17 @@
 import { useState } from 'react';
 import api, { errMsg } from '../../../api';
-import { useToast, FileDrop } from '../../../components/ui';
+import { MAX_FILE_MB, useToast, useConfirm, FileDrop } from '../../../components/ui';
 
 /** Info pengujian lab untuk Sertifikasi Produk (ST-06): panel di kolom utama. */
 export default function LabInfoForm({ app, onSaved }) {
   const toast = useToast();
+  const confirm = useConfirm();
   const [f, setF] = useState({ lab_name: app.lab_info?.name || 'Laboratorium Pengujian PSU', lab_estimate: app.lab_info?.estimate || '', lab_link: app.lab_info?.link || '' });
   const [files, setFiles] = useState([]);
   const [k, setK] = useState(0);
   const [busy, setBusy] = useState(false);
   const save = async () => {
+    if (!(await confirm({ title: 'Simpan Info Pengujian Lab?', body: files.length || f.lab_link ? 'Info lab dan LHU tampil ke pelanggan, dan pelanggan menerima email bahwa hasil uji sudah tersedia.' : 'Info lab tampil ke pelanggan.', ok: 'Ya, Simpan', icon: 'flask' }))) return;
     const fd = new FormData(); Object.entries(f).forEach(([key, v]) => fd.append(key, v)); [...files].forEach((x) => fd.append('lhu', x));
     setBusy(true);
     try { onSaved((await api.post(`/admin/applications/${app.id}/lab-info`, fd)).data); setFiles([]); setK(k + 1); toast('Info pengujian lab diperbarui dan tampil ke pelanggan.'); } catch (e) { toast(errMsg(e), 'danger'); } finally { setBusy(false); }
@@ -24,7 +26,7 @@ export default function LabInfoForm({ app, onSaved }) {
           <div className="col-md-6"><label className="form-label" htmlFor="li-e">Estimasi Selesai</label><input id="li-e" className="form-control" value={f.lab_estimate} onChange={(e) => setF({ ...f, lab_estimate: e.target.value })} placeholder="mis. 10 hari kerja" /></div>
           <div className="col-12"><label className="form-label" htmlFor="li-l">Tautan LHU <span className="fw-normal text-muted2">(opsional)</span></label><input id="li-l" className="form-control" value={f.lab_link} onChange={(e) => setF({ ...f, lab_link: e.target.value })} placeholder="https://…" /></div>
         </div>
-        <FileDrop key={k} id="lhu" multiple files={files} onChange={setFiles} label="Unggah LHU" hint="atau tempel tautan hasil lab di atas · PDF, maks. 10 MB" />
+        <FileDrop key={k} id="lhu" multiple files={files} onChange={setFiles} label="Unggah LHU" hint={`atau tempel tautan hasil lab di atas · PDF, maks. ${MAX_FILE_MB} MB`} />
         {lhu.length > 0 && <div>{lhu.map((d) => <span key={d.id} className="file-chip"><i className="bi bi-paperclip" />{d.original_name}</span>)}</div>}
         <button className="btn btn-outline-primary align-self-start" disabled={busy} onClick={save}>{busy ? 'Menyimpan…' : 'Simpan Info Lab'}</button>
       </div>

@@ -2,6 +2,7 @@
 import { useState, useRef, useEffect, useId, useCallback } from 'react';
 import { useDismiss } from '../hooks/useDismiss';
 import { createPortal } from 'react-dom';
+import { useConfirm } from './feedback';
 
 /**
  * Pop-up form: modal di desktop, lembar dari bawah (bottom sheet) di HP. Animasi masuk & keluar.
@@ -24,7 +25,8 @@ export function Sheet({ open, onClose, title, sub, icon, danger, children, foote
     if (!open) return undefined;
     // pop-up bertumpuk (mis. "Tambah Kategori" di atas form): Esc hanya menutup yang paling atas
     STACK.push(sid);
-    const onKey = (e) => e.key === 'Escape' && STACK[STACK.length - 1] === sid && onClose();
+    // Esc saat dialog konfirmasi terbuka hanya menutup konfirmasinya
+    const onKey = (e) => e.key === 'Escape' && STACK[STACK.length - 1] === sid && !document.querySelector('.ui-confirm') && onClose();
     window.addEventListener('keydown', onKey);
     document.body.classList.add('sheet-open');
     return () => {
@@ -58,12 +60,20 @@ export function Sheet({ open, onClose, title, sub, icon, danger, children, foote
  * Pop-up berisi form (tambah/ubah data). Tombol Simpan & Batal di bagian bawah pop-up.
  * onSubmit dipanggil saat form dikirim (Enter atau tombol Simpan); validasi bawaan browser tetap jalan.
  */
-export function FormSheet({ open, onClose, onSubmit, title, sub, icon = 'pencil-square', wide, busy, submitLabel = 'Simpan', danger, children }) {
+export function FormSheet({ open, onClose, onSubmit, title, sub, icon = 'pencil-square', wide, busy, submitLabel = 'Simpan', danger, confirm: ask, children }) {
   const id = useId();
-  const submit = (e) => { e.preventDefault(); if (!busy) onSubmit(e); };
+  const confirm = useConfirm();
+  // ask: { title, body, ok } atau fungsi yang mengembalikannya — ditanyakan dulu sebelum onSubmit dijalankan
+  const submit = async (e) => {
+    e.preventDefault();
+    if (busy) return;
+    const q = typeof ask === 'function' ? ask() : ask;
+    if (q && !(await confirm({ icon: danger ? 'exclamation-triangle' : 'question-circle', danger, ok: submitLabel, ...q }))) return;
+    onSubmit(e);
+  };
   return (
     <Sheet open={open} onClose={() => !busy && onClose()} title={title} sub={sub} icon={icon} wide={wide} danger={danger}
-      footer={<><button type="button" className="btn btn-outline-secondary" onClick={onClose} disabled={busy}>Batal</button><button type="submit" form={id} className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} disabled={busy}>{busy ? 'Menyimpan…' : submitLabel}</button></>}>
+      footer={<><button type="button" className="btn btn-outline-secondary" onClick={onClose} disabled={busy}>Batal</button><button type="submit" form={id} className={`btn ${danger ? 'btn-danger' : 'btn-primary'}`} disabled={busy}>{busy ? <><span className="spinner-border spinner-border-sm me-2" aria-hidden="true" />Memproses…</> : submitLabel}</button></>}>
       <form id={id} onSubmit={submit} noValidate={false}>{children}</form>
     </Sheet>
   );

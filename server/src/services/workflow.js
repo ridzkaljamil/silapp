@@ -10,7 +10,7 @@ const path = require('path');
 const { q, one } = require('../config/db');
 const { sendMail } = require('../utils/mailer');
 const { UPLOAD_DIR } = require('../utils/upload');
-const { optionLabel, taxes, PPN_LABEL } = require('../utils/pricing');
+const { optionLabel, taxes, PPN_LABEL, parseMoney } = require('../utils/pricing');
 const { getSettings } = require('../utils/settings');
 const { notifyCustomer, notifyStaff } = require('./notifications');
 
@@ -22,9 +22,21 @@ const rupiah = (n) => `Rp${Number(n || 0).toLocaleString('id-ID')}`;
 const APP_URL = () => process.env.CLIENT_URL || 'http://localhost:5173';
 const OPEN_FINDINGS = `(SELECT COUNT(*) FROM findings f WHERE f.application_id=a.id AND f.category<>'observasi' AND f.status<>'ditutup')`;
 
-async function getSteps(serviceId) {
-  return q('SELECT * FROM service_steps WHERE service_id=? ORDER BY step_order', [serviceId]);
+/** Tahapan layanan; flow '1B' = alur khusus skema Tipe 1b (jika layanan memilikinya), selain itu alur utama. */
+async function getSteps(serviceId, flow = '') {
+  if (flow) {
+    const rows = await q('SELECT * FROM service_steps WHERE service_id=? AND flow=? ORDER BY step_order', [serviceId, flow]);
+    if (rows.length) return rows;
+  }
+  return q("SELECT * FROM service_steps WHERE service_id=? AND flow='' ORDER BY step_order", [serviceId]);
 }
+/** Alur tahapan untuk pengajuan baru: SP skema Tipe 1b memakai alur 1B bila sudah disiapkan. */
+async function flowFor(serviceId, serviceCode, scheme) {
+  if (serviceCode !== 'SP' || !/1b/i.test(scheme || '')) return '';
+  return (await one("SELECT id FROM service_steps WHERE service_id=? AND flow='1B' LIMIT 1", [serviceId])) ? '1B' : '';
+}
+/** Pengajuan Tipe 1b: tanpa audit & temuan (tahap 5 Sampling). */
+const is1BFlow = (app) => app.flow === '1B';
 
 async function loadApp(id) {
   const app = await one(
@@ -33,7 +45,7 @@ async function loadApp(id) {
        FROM applications a JOIN services s ON s.id=a.service_id JOIN users u ON u.id=a.user_id
       WHERE a.id=?`, [id]);
   if (!app) throw httpError(404, 'Pengajuan tidak ditemukan.');
-  app.steps = await getSteps(app.service_id);
+  app.steps = await getSteps(app.service_id, app.flow);
   return app;
 }
 
@@ -124,8 +136,8 @@ async function approve(app, user, { note, internal, certificateNo, certFile, fil
   const st = stepOf(app);
 
   if (st.is_payment_step && app.payment_status !== 'terverifikasi') {
-    throw httpError(400, app.payment_status === 'belum' ? 'Terbitkan invoice terlebih dahulu, lalu tunggu pelanggan mengunggah bukti bayar.'
-      : app.payment_status === 'invoice' ? 'Pelanggan belum mengunggah bukti bayar untuk invoice ini.'
+    throw httpError(400, app.payment_status === 'belum' ? 'Terbitkan proforma invoice terlebih dahulu, lalu tunggu pelanggan mengunggah bukti bayar.'
+      : app.payment_status === 'invoice' ? 'Pelanggan belum mengunggah bukti bayar untuk proforma invoice ini.'
         : 'Periksa dan verifikasi bukti bayar terlebih dahulu.');
   }
   if (isLabTesting(app) && st.status_code === 'LAB-04') {
@@ -138,8 +150,10 @@ async function approve(app, user, { note, internal, certificateNo, certFile, fil
   if (st.is_certificate_step) {
     if (!certificateNo) throw httpError(400, `Nomor ${docWord(app).toLowerCase()} wajib diisi.`);
     if (!certFile) throw httpError(400, `File ${docWord(app).toLowerCase()} (PDF) wajib diunggah.`);
-    const dup = await one('SELECT id FROM certificates WHERE certificate_no=?', [certificateNo]);
-    if (dup) throw httpError(400, 'Nomor sertifikat sudah dipakai.');
+    if (!/\.pdf$/i.test(certFile)) throw httpError(400, `File ${docWord(app).toLowerCase()} harus berformat PDF.`);
+    // nomor tidak boleh sama dengan sertifikat SILAPP lain maupun sertifikat lama (Directory)
+    const dup = (await one('SELECT id FROM certificates WHERE certificate_no=?', [certificateNo])) || (await one('SELECT id FROM legacy_certificates WHERE certificate_no=?', [certificateNo]));
+    if (dup) throw httpError(400, `Nomor ${docWord(app).toLowerCase()} sudah dipakai.`);
     await q('INSERT INTO certificates (application_id, certificate_no, issued_at, file_path) VALUES (?,?,CURDATE(),?)',
       [app.id, certificateNo, certFile]);
     await addLog(app, 'terbit', `${docWord(app)} ${certificateNo} terbit.`, user);
@@ -191,8 +205,8 @@ async function requestAction(app, user, note, { files, docName } = {}) {
   if (!note) throw httpError(400, 'Catatan tindakan yang diminta wajib diisi.');
   assertOpen(app);
   const st = stepOf(app);
-  if (app.service_code === 'SP' && st.status_code === 'ST-06') {
-    // ditemukan ketidaksesuaian hasil uji -> masuk ST-07 Tindakan perbaikan
+  if (app.service_code === 'SP' && st.status_code === 'ST-06' && !is1BFlow(app)) {
+    // ditemukan ketidaksesuaian hasil uji -> masuk ST-07 Tindakan perbaikan (alur Tipe 1b tidak punya tahap perbaikan)
     await addLog(app, 'setujui', 'Pengujian selesai, ditemukan ketidaksesuaian.', user);
     await q('UPDATE applications SET nc_flag=1 WHERE id=?', [app.id]);
     app.nc_flag = 1;
@@ -233,39 +247,45 @@ async function updateParameter(app, user, paramId, status) {
 
 /**
  * Rincian pekerjaan invoice.
- * Lab: dari daftar harga (paket SNI / per parameter) × jumlah sampel; harga parameter "Lainnya" diisi Admin.
+ * Lab: dari daftar harga (paket SNI / per parameter) × jumlah sampel; harga parameter "Lainnya" diisi Admin,
+ *   ditambah pekerjaan / biaya tambahan yang diisi Admin (uraian, metode, jumlah × harga).
  * SP & Kalibrasi: baris pekerjaan (jumlah × harga satuan) diisi Admin; paket LSPro + Lab = baris sertifikasi + baris uji lab.
  * Semua harga belum termasuk PPN; pajak dihitung oleh utils/pricing.taxes().
  */
-async function invoiceItems(app, { items: manual = [], extra, customPrices = {} }) {
+async function invoiceItems(app, { items: manual = [], customPrices = {} }) {
+  // baris isian Admin: uraian, (metode), jumlah × harga satuan (mis. "2 sampel × Rp2.500.000"); invoice lama hanya punya amount
+  const rows = (Array.isArray(manual) ? manual : []).map((x) => {
+    const qty = Math.min(999, Math.max(1, Math.round(+x.qty || 1)));
+    const price = parseMoney(x.price ?? x.amount) || 0;
+    const method = String(x.method || '').trim().slice(0, 80);
+    return { label: String(x.label || '').trim().slice(0, 600), ...(method && { method }), qty, unit: String(x.unit || '').trim().slice(0, 20), price, amount: qty * price };
+  }).filter((x) => x.label || x.price);
+  const bad = rows.find((x) => !x.label || x.price <= 0);
+  if (bad) throw httpError(400, 'Setiap baris pekerjaan wajib berisi uraian dan harga lebih dari 0.');
   if (!isLabTesting(app)) {
-    // tiap baris: uraian, jumlah × harga satuan (mis. "2 sampel × Rp2.500.000"); invoice lama hanya punya amount
-    const rows = (Array.isArray(manual) ? manual : []).map((x) => {
-      const qty = Math.min(999, Math.max(1, Math.round(+x.qty || 1)));
-      const price = Math.round(+(x.price ?? x.amount) || 0);
-      return { label: String(x.label || '').trim().slice(0, 600), qty, unit: String(x.unit || '').trim().slice(0, 20), price, amount: qty * price };
-    }).filter((x) => x.label || x.price);
     if (!rows.length) throw httpError(400, 'Isi minimal satu baris pekerjaan beserta harganya.');
-    const bad = rows.find((x) => !x.label || x.price <= 0);
-    if (bad) throw httpError(400, 'Setiap baris pekerjaan wajib berisi uraian dan harga lebih dari 0.');
     return rows;
   }
   const qty = Number((await one('SELECT COALESCE(SUM(quantity),1) n FROM samples WHERE application_id=?', [app.id])).n) || 1;
   const params = await q('SELECT * FROM application_parameters WHERE application_id=? ORDER BY id', [app.id]);
   const items = [];
   const opt = optionLabel(app.service_code, app.price_option);
+  // format tabel invoice lab PSU: tiap baris punya metode uji; brand/spesifikasi produk dicetak di baris pertama
+  const { labContext, labLabel } = require('./invoice');
+  const ctx = await labContext(app);
   if (app.full_sni) {
     const prod = await one('SELECT name, package_price, package_price_alt FROM products WHERE id=?', [app.product_id]);
-    const pkg = app.price_option === 'alt' ? (prod?.package_price_alt ?? prod?.package_price) : prod?.package_price;
+    // harga saat diajukan; pengajuan lama tanpa catatan harga memakai daftar harga terbaru
+    const pkg = app.package_snapshot ?? (app.price_option === 'alt' ? (prod?.package_price_alt ?? prod?.package_price) : prod?.package_price);
     if (!pkg) throw httpError(400, `Harga paket "parameter lengkap sesuai SNI"${opt ? ` (${opt})` : ''} untuk produk ini belum diatur. Atur dulu di Kelola Layanan > Ruang Lingkup & Harga.`);
-    items.push({ label: `Paket parameter lengkap sesuai SNI · ${prod.name}${opt ? ` · ${opt}` : ''}`, qty, price: +pkg, amount: +pkg * qty });
+    items.push({ label: labLabel(ctx, 'lengkap sesuai SNI', opt), method: ctx.sni || '-', qty, price: +pkg, amount: +pkg * qty });
   }
   for (const p of params) {
     if (app.full_sni && !p.is_custom) continue;
     let price = p.price_snapshot;
     if (p.is_custom) {
-      price = customPrices[p.id] ?? customPrices[String(p.id)] ?? price;
-      if (price === undefined || price === null || price === '' || +price < 0) throw httpError(400, `Isi harga parameter "${p.name}" (parameter lainnya).`);
+      price = parseMoney(customPrices[p.id] ?? customPrices[String(p.id)] ?? price);
+      if (price === null) throw httpError(400, `Isi harga parameter "${p.name}" (parameter lainnya).`);
       await q('UPDATE application_parameters SET price_snapshot=? WHERE id=?', [+price, p.id]);
     }
     if (price === null) {
@@ -275,32 +295,38 @@ async function invoiceItems(app, { items: manual = [], extra, customPrices = {} 
       if (price === null || price === undefined) throw httpError(400, `Harga parameter "${p.name}" belum diatur. Atur dulu di Kelola Layanan > Ruang Lingkup & Harga.`);
       await q('UPDATE application_parameters SET price_snapshot=? WHERE id=?', [+price, p.id]);
     }
-    items.push({ label: p.name + (p.is_custom ? ' (lainnya)' : opt ? ` · ${opt}` : ''), qty, price: +price, amount: +price * qty });
+    items.push({ label: labLabel(ctx, `${p.name}${p.is_custom ? ' (lainnya)' : ''}`, opt), method: p.method || (p.is_custom ? '-' : ctx.sni || '-'), qty, price: +price, amount: +price * qty });
   }
-  const add = Math.round(+extra || 0);
-  if (add > 0) items.push({ label: app.price_option === 'alt' && app.service_code === 'KIM' ? 'Biaya tambahan Ekspress' : 'Biaya tambahan', amount: add });
+  // pekerjaan / biaya tambahan dari Admin (mis. biaya tambahan Ekspress), ditandai extra agar bisa diedit lagi
+  rows.forEach((r) => items.push({ ...r, method: r.method || '-', extra: true }));
+  // brand / spesifikasi produk dari pengajuan pelanggan, dicetak bernomor di baris pertama
+  if (items.length && ctx.specs.length) items[0].specs = ctx.specs.slice(0, 50);
   return items;
 }
 
 const ROMAN = ['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'];
-/** Nomor invoice berurutan per tahun: 001/KEU/PSU/X/2026 (kode diatur di Pengaturan Umum). */
-async function nextInvoiceNo() {
+/**
+ * Nomor invoice: 001/PSU/KIM/X/2026 = urut/kode perusahaan/kode layanan/bulan Romawi/tahun.
+ * Urutan dipisah per layanan dan mulai lagi dari 001 setiap tahun (kode perusahaan diatur di Pengaturan Umum).
+ */
+async function nextInvoiceNo(app) {
   const now = new Date();
   const year = now.getFullYear();
   const { invoice_code: code } = await getSettings(['invoice_code']);
-  const r = await one('SELECT COALESCE(MAX(invoice_seq),0)+1 n FROM payments WHERE invoice_year=?', [year]);
-  return { seq: r.n, year, no: `${String(r.n).padStart(3, '0')}/KEU/${code || 'PSU'}/${ROMAN[now.getMonth()]}/${year}` };
+  const r = await one(`SELECT COALESCE(MAX(p.invoice_seq),0)+1 n FROM payments p JOIN applications a ON a.id=p.application_id
+    WHERE a.service_id=? AND p.invoice_year=?`, [app.service_id, year]);
+  return { seq: r.n, year, no: `${String(r.n).padStart(3, '0')}/${code || 'PSU'}/${app.service_code}/${ROMAN[now.getMonth()]}/${year}` };
 }
 
-async function issueInvoice(app, user, { items: manual, extra, customPrices, withPph23, dueDate, note }) {
+async function issueInvoice(app, user, { items: manual, customPrices, withPph23, dueDate, note }) {
   assertOpen(app);
-  if (!stepOf(app).is_payment_step) throw httpError(400, 'Invoice hanya dapat diterbitkan pada tahap pembayaran.');
-  if (!['belum', 'invoice'].includes(app.payment_status)) throw httpError(400, 'Invoice tidak dapat diubah karena bukti bayar sudah diunggah.');
-  const items = await invoiceItems(app, { items: manual, extra, customPrices });
+  if (!stepOf(app).is_payment_step) throw httpError(400, 'Proforma invoice hanya dapat diterbitkan pada tahap pembayaran.');
+  if (!['belum', 'invoice'].includes(app.payment_status)) throw httpError(400, 'Proforma invoice tidak dapat diubah karena bukti bayar sudah diunggah.');
+  const items = await invoiceItems(app, { items: manual, customPrices });
   const t = taxes(items.reduce((s, i) => s + i.amount, 0), !!withPph23);
   if (t.price <= 0) throw httpError(400, 'Total harga invoice harus lebih dari 0.');
   const existing = await one('SELECT * FROM payments WHERE application_id=? AND status="invoice" ORDER BY id DESC LIMIT 1', [app.id]);
-  const num = existing ? { no: existing.invoice_no } : await nextInvoiceNo();
+  const num = existing ? { no: existing.invoice_no } : await nextInvoiceNo(app);
   const vals = [t.grandTotal, t.price, t.dppLain, t.ppn, t.total, t.pph23, withPph23 ? 1 : 0, JSON.stringify(items), dueDate || null, note || null, user.id];
   if (existing) {
     await q(`UPDATE payments SET amount=?, dpp=?, dpp_lain=?, ppn=?, total=?, pph23=?, with_pph23=?, items=?, due_date=?, note=?, issued_by=?, created_at=NOW()
@@ -311,8 +337,8 @@ async function issueInvoice(app, user, { items: manual, extra, customPrices, wit
   }
   await q('UPDATE applications SET payment_status="invoice" WHERE id=?', [app.id]);
   const breakdown = `Harga ${rupiah(t.price)} + ${PPN_LABEL} ${rupiah(t.ppn)}${t.pph23 ? ` − PPh 23 ${rupiah(t.pph23)}` : ''}`;
-  await addLog(app, 'invoice', `Invoice ${num.no} ${existing ? 'diperbarui' : 'diterbitkan'}: ${rupiah(t.grandTotal)} (${breakdown}).${note ? ' ' + note : ''}`, user);
-  await notify(app, `Invoice ${num.no}`, `Invoice untuk pengajuan Anda telah terbit dengan total pembayaran ${rupiah(t.grandTotal)} (${breakdown}).${dueDate ? `\nJatuh tempo: ${tgl(dueDate)}.` : ''}\nInvoice dapat diunduh di akun SILAPP. Setelah membayar, unggah bukti transfer melalui akun SILAPP.`);
+  await addLog(app, 'invoice', `Proforma invoice ${num.no} ${existing ? 'diperbarui' : 'diterbitkan'}: ${rupiah(t.grandTotal)} (${breakdown}).${note ? ' ' + note : ''}`, user);
+  await notify(app, `Proforma Invoice ${num.no}`, `Proforma invoice untuk pengajuan Anda telah terbit dengan total pembayaran ${rupiah(t.grandTotal)} (${breakdown}).${dueDate ? `\nJatuh tempo: ${tgl(dueDate)}.` : ''}\nProforma invoice dapat diunduh di akun SILAPP. Setelah membayar, unggah bukti transfer melalui akun SILAPP.`);
 }
 
 async function markPaid(app, user) {
@@ -368,6 +394,7 @@ async function tryAutoAdvance(app) {
 const MONTHS = { mayor: 1, minor: 2 };
 const assertFindingStage = (app) => {
   if (app.service_code !== 'SP') throw httpError(400, 'Temuan audit hanya untuk Sertifikasi Produk.');
+  if (is1BFlow(app)) throw httpError(400, 'Skema Tipe 1b tidak melalui audit, jadi tidak ada temuan audit.');
   assertOpen(app);
   const code = stepOf(app).status_code;
   if (!['ST-05', 'ST-06', 'ST-07'].includes(code)) throw httpError(400, 'Temuan dapat diinput pada tahap ST-05 s.d. ST-07.');
@@ -394,7 +421,7 @@ async function addFindings(app, user, { reportDate, items }) {
   await addLog(app, 'temuan', `Laporan audit (${tgl(reportDate)}): ${parts}. ${count.mayor + count.minor ? 'Mohon kirim bukti perbaikan sebelum tenggat.' : 'Tidak ada tindakan wajib.'}`, user);
   await notify(app, 'Hasil audit: temuan', `Laporan audit tanggal ${tgl(reportDate)} mencatat temuan: ${parts}.\n` +
     'Tenggat perbaikan: mayor 1 bulan dan minor 2 bulan sejak tanggal laporan audit. Temuan observasi tidak memerlukan tindakan wajib.\n' +
-    'Silakan lihat rincian temuan dan unggah bukti perbaikan melalui akun SILAPP. Jika tenggat terlewat, Anda dapat mengajukan perpanjangan waktu 1 bulan.');
+    'Silakan lihat rincian temuan dan unggah bukti perbaikan melalui akun SILAPP. Bila membutuhkan waktu lebih, Anda dapat mengajukan perpanjangan 1 bulan (satu kali per temuan).');
 }
 
 async function getFinding(app, id) {
@@ -434,28 +461,38 @@ async function adminFinding(app, user, id, { op, note, dueDate, description }) {
   } else throw httpError(400, 'Aksi temuan tidak dikenal.');
 }
 
-/** Pelanggan mengirim bukti perbaikan untuk satu temuan. */
-async function customerFindingReply(app, user, id, note, files) {
+/**
+ * Pelanggan mengirim bukti perbaikan untuk satu temuan: koreksi, akar penyebab masalah, tindakan korektif untuk
+ * mencegah pengulangan (wajib), keterangan tambahan (opsional), dan file bukti (wajib).
+ */
+async function customerFindingReply(app, user, id, { note, correction, rootCause, correctiveAction }, files) {
   assertOpen(app);
   const f = await getFinding(app, id);
   if (f.status === 'ditutup') throw httpError(400, 'Temuan ini sudah ditutup.');
-  if (!files?.length && !note) throw httpError(400, 'Unggah bukti perbaikan atau isi keterangan.');
-  await q('UPDATE findings SET status="dikirim", customer_note=? WHERE id=?', [note || null, id]);
-  const logId = await addLog(app, 'tanggapan', `Bukti perbaikan ${fLabel(f)} dikirim.${note ? ' ' + note : ''}`, user);
+  const t = (v) => String(v ?? '').trim().slice(0, 3000);
+  [note, correction, rootCause, correctiveAction] = [t(note), t(correction), t(rootCause), t(correctiveAction)];
+  if (!correction) throw httpError(400, 'Isi Koreksi.');
+  if (!rootCause) throw httpError(400, 'Isi Akar Penyebab Masalah.');
+  if (!correctiveAction) throw httpError(400, 'Isi Tindakan Korektif untuk Mencegah Pengulangan.');
+  if (!files?.length) throw httpError(400, 'Unggah minimal satu file bukti perbaikan.');
+  await q('UPDATE findings SET status="dikirim", customer_note=?, correction=?, root_cause=?, corrective_action=? WHERE id=?',
+    [note || null, correction, rootCause, correctiveAction, id]);
+  const logId = await addLog(app, 'tanggapan', `Bukti perbaikan ${fLabel(f)} dikirim.\nKoreksi: ${correction}\nAkar penyebab: ${rootCause}\nTindakan korektif: ${correctiveAction}${note ? `\nKeterangan: ${note}` : ''}`, user);
   await saveDocs(app, user, files, { docName: `Bukti Perbaikan ${fLabel(f)}`, logId, findingId: id });
   await notifyStaff(app, 'Bukti perbaikan temuan masuk', `${app.application_no} · ${app.company_name} · ${fLabel(f)}`);
 }
 
-/** Pelanggan mengajukan perpanjangan 1 bulan (maksimal 1 kali per temuan). */
-async function customerExtension(app, user, id, reason) {
+/** Pelanggan mengajukan perpanjangan 1 bulan (maksimal 1 kali per temuan), boleh disertai lampiran pendukung. */
+async function customerExtension(app, user, id, reason, files) {
   assertOpen(app);
   const f = await getFinding(app, id);
   if (f.category === 'observasi') throw httpError(400, 'Temuan observasi tidak memiliki tenggat.');
   if (f.status === 'ditutup') throw httpError(400, 'Temuan ini sudah ditutup.');
   if (f.extension_status !== 'tidak') throw httpError(400, 'Perpanjangan hanya dapat diajukan satu kali per temuan.');
   if (!reason) throw httpError(400, 'Isi alasan perpanjangan.');
-  await q('UPDATE findings SET extension_status="diajukan", extension_reason=? WHERE id=?', [reason, id]);
-  await addLog(app, 'perpanjangan', `Pelanggan mengajukan perpanjangan 1 bulan untuk ${fLabel(f)}: ${reason}`, user);
+  await q('UPDATE findings SET extension_status="diajukan", extension_reason=? WHERE id=?', [String(reason).slice(0, 500), id]);
+  const logId = await addLog(app, 'perpanjangan', `Pelanggan mengajukan perpanjangan 1 bulan untuk ${fLabel(f)}: ${reason}`, user);
+  await saveDocs(app, user, files, { docName: `Lampiran Perpanjangan ${fLabel(f)}`, logId, findingId: id });
   await notifyStaff(app, 'Permintaan perpanjangan temuan', `${app.application_no} · ${app.company_name} · ${fLabel(f)}`);
 }
 
@@ -486,7 +523,7 @@ async function customerPay(app, user, proofPath) {
   assertOpen(app);
   const st = stepOf(app);
   if (!st.is_payment_step) throw httpError(400, 'Pengajuan belum berada di tahap pembayaran.');
-  if (app.payment_status === 'belum') throw httpError(400, 'Invoice belum diterbitkan PSU.');
+  if (app.payment_status === 'belum') throw httpError(400, 'Proforma invoice belum diterbitkan PSU.');
   if (app.payment_status !== 'invoice') throw httpError(400, 'Bukti bayar sudah diunggah.');
   await q('UPDATE payments SET proof_path=?, paid_at=NOW(3), status="menunggu" WHERE application_id=? AND status="invoice"', [proofPath, app.id]);
   await q('UPDATE applications SET payment_status="menunggu" WHERE id=?', [app.id]);
@@ -529,7 +566,7 @@ async function submitSurvey(app, user, b) {
 }
 
 module.exports = {
-  httpError, getSteps, loadApp, stepOf, condition, isSkipped, assertCanHandle, assertStep, addLog, notify,
+  httpError, getSteps, flowFor, loadApp, stepOf, condition, isSkipped, assertCanHandle, assertStep, addLog, notify,
   OPEN_FINDINGS, approve, requestAction, ignore, reject, updateParameter, issueInvoice, verifyPayment, tryAutoAdvance, allDocsDownloaded,
   addFindings, adminFinding, customerFindingReply, customerExtension, updateLabInfo, customerReply, customerPay, submitSurvey,
 };

@@ -12,6 +12,10 @@ const pool = mysql.createPool({
   enableKeepAlive: true,
 });
 
+// sql_mode seperti bawaan MariaDB/XAMPP: sebagian hosting MySQL (mis. mode ANSI) membaca teks berkutip ganda
+// ("selesai") sebagai nama kolom. Dengan ini query berjalan sama di XAMPP, Hostinger, maupun MySQL terkelola.
+pool.pool.on('connection', (conn) => { conn.query("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'"); });
+
 /** Jalankan query dengan prepared statement (aman dari SQL injection). */
 async function q(sql, params = []) {
   const [rows] = await pool.query(sql, params);

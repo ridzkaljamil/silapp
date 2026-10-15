@@ -3,18 +3,29 @@ import { useEffect, useState, useCallback } from 'react';
 import { peekLocalDraft, dropLocalDraft } from '../../hooks/useLocalDraft';
 import { Link, useParams } from 'react-router-dom';
 import api, { errMsg, download } from '../../api';
-import { Loading, useToast, Sheet, FileDrop, Menu, rupiah, fmtDate } from '../../components/ui';
+import { Loading, useToast, useConfirm, Sheet, FileDrop, Menu, rupiah, fmtDate } from '../../components/ui';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import ApplicationView from '../../components/ApplicationView';
 import { docWord } from '../../lib/constants';
 import Survey from './Survey';
 
+const EMPTY_ANS = { correction: '', root_cause: '', corrective_action: '' };
+/** Isian wajib bukti perbaikan temuan audit (nama field sama dengan API). */
+const ANS_FIELDS = [
+  ['correction', 'Koreksi', 'Perbaikan yang sudah dilakukan atas temuan ini'],
+  ['root_cause', 'Akar Penyebab Masalah', 'Mengapa temuan ini terjadi'],
+  ['corrective_action', 'Tindakan Korektif untuk Mencegah Pengulangan', 'Langkah agar temuan serupa tidak terulang'],
+];
+
 export default function PengajuanDetail() {
   const { id } = useParams();
   const toast = useToast();
+  const confirm = useConfirm();
   const [app, setApp] = useState(null);
   const [files, setFiles] = useState([]);
   const [note, setNote] = useState('');
+  // bukti perbaikan temuan: koreksi, akar penyebab, tindakan korektif (wajib)
+  const [ans, setAns] = useState(EMPTY_ANS);
   const [busy, setBusy] = useState(false);
   const [thanks, setThanks] = useState('');
   const [sheet, setSheet] = useState(null); // { kind: 'reply' | 'pay' | 'bukti' | 'ext', f? }
@@ -27,35 +38,52 @@ export default function PengajuanDetail() {
 
   // catatan tanggapan tersimpan otomatis di browser per pengajuan & jenis tanggapan
   const noteKey = (kind, f) => `silapp_catatan_${id}_${kind}${f?.id ? `_${f.id}` : ''}`;
-  const openSheet = (kind, f) => { setNote(peekLocalDraft(noteKey(kind, f), '')); setFiles([]); setSheet({ kind, f }); };
-  const changeNote = (v) => { setNote(v); try { localStorage.setItem(noteKey(sheet.kind, sheet.f), JSON.stringify(v)); } catch { /* abaikan */ } };
+  const openSheet = (kind, f) => {
+    const saved = peekLocalDraft(noteKey(kind, f), '');
+    // draft lama berupa teks; draft bukti perbaikan berupa objek berisi keempat isian
+    const obj = saved && typeof saved === 'object' ? saved : { note: saved || '' };
+    setNote(obj.note || ''); setAns({ ...EMPTY_ANS, ...obj, note: undefined }); setFiles([]); setSheet({ kind, f });
+  };
+  const persist = (v) => { try { localStorage.setItem(noteKey(sheet.kind, sheet.f), JSON.stringify(v)); } catch { /* abaikan */ } };
+  const changeNote = (v) => { setNote(v); persist(sheet.kind === 'bukti' ? { ...ans, note: v } : v); };
+  const changeAns = (k, v) => { const next = { ...ans, [k]: v }; setAns(next); persist({ ...next, note }); };
   const run = async (fn, ok) => {
     setBusy(true);
-    try { setApp((await fn()).data); if (sheet) dropLocalDraft(noteKey(sheet.kind, sheet.f)); setSheet(null); setFiles([]); setNote(''); toast(ok); } catch (e) { toast(errMsg(e), 'danger'); } finally { setBusy(false); }
+    try { setApp((await fn()).data); if (sheet) dropLocalDraft(noteKey(sheet.kind, sheet.f)); setSheet(null); setFiles([]); setNote(''); setAns(EMPTY_ANS); toast(ok); } catch (e) { toast(errMsg(e), 'danger'); } finally { setBusy(false); }
   };
-  const submit = () => {
+  const ask = (title, body, ok = 'Ya, Kirim', icon = 'send') => confirm({ title, body, ok, icon });
+  const submit = async () => {
+    if (busy) return null;
     const k = sheet.kind;
     if (k === 'reply') {
       if (!note.trim() && !files.length) return toast('Isi tanggapan atau unggah dokumen.', 'danger');
+      if (!(await ask('Kirim Tanggapan?', `Tanggapan${files.length ? ` dan ${files.length} file` : ''} dikirim ke PSU untuk diperiksa.`))) return null;
       const fd = new FormData(); fd.append('note', note); [...files].forEach((f) => fd.append('documents', f));
       return run(() => api.post(`/applications/${id}/reply`, fd), 'Tanggapan terkirim. Admin akan memeriksa ulang.');
     }
     if (k === 'pay') {
       if (!files.length) return toast('Pilih file bukti bayar dulu.', 'danger');
+      if (!(await ask('Kirim Bukti Bayar?', <>Bukti transfer untuk tagihan <b>{rupiah(app.payment?.amount)}</b> dikirim ke PSU untuk diverifikasi.</>, 'Ya, Kirim', 'receipt'))) return null;
       const fd = new FormData(); fd.append('proof', files[0]);
       return run(() => api.post(`/applications/${id}/payment`, fd), 'Bukti bayar terkirim untuk diverifikasi.');
     }
     if (k === 'bukti') {
-      if (!files.length && !note.trim()) return toast('Unggah bukti perbaikan atau isi keterangan.', 'danger');
-      const fd = new FormData(); fd.append('note', note); [...files].forEach((x) => fd.append('documents', x));
+      const miss = ANS_FIELDS.find(([key]) => !String(ans[key] || '').trim());
+      if (miss) return toast(`Isi ${miss[1]}.`, 'danger');
+      if (!files.length) return toast('Unggah minimal satu file bukti perbaikan.', 'danger');
+      if (!(await ask('Kirim Bukti Perbaikan?', `Bukti perbaikan temuan ${sheet.f.category} #${sheet.f.id} dikirim ke PSU untuk ditinjau.`, 'Ya, Kirim', 'upload'))) return null;
+      const fd = new FormData(); fd.append('note', note); ANS_FIELDS.forEach(([key]) => fd.append(key, ans[key])); [...files].forEach((x) => fd.append('documents', x));
       return run(() => api.post(`/applications/${id}/findings/${sheet.f.id}/reply`, fd), 'Bukti perbaikan terkirim. PSU akan meninjau.');
     }
     if (k === 'batal') {
+      // pop-up ini sendiri berupa konfirmasi pembatalan
       if (!note.trim()) return toast('Tuliskan alasan pembatalan.', 'danger');
       return run(() => api.post(`/applications/${id}/cancel`, { reason: note }), 'Pengajuan dibatalkan. Anda bisa mengajukan ulang dengan data yang diperbaiki.');
     }
     if (!note.trim()) return toast('Isi alasan perpanjangan.', 'danger');
-    return run(() => api.post(`/applications/${id}/findings/${sheet.f.id}/extension`, { reason: note }), 'Pengajuan perpanjangan terkirim.');
+    if (!(await ask('Ajukan Perpanjangan?', 'Perpanjangan 1 bulan hanya dapat diajukan satu kali per temuan dan perlu disetujui PSU.', 'Ya, Ajukan', 'calendar-plus'))) return null;
+    const fd = new FormData(); fd.append('reason', note); [...files].forEach((x) => fd.append('documents', x));
+    return run(() => api.post(`/applications/${id}/findings/${sheet.f.id}/extension`, fd), 'Pengajuan perpanjangan terkirim.');
   };
 
   const dw = docWord(app.service_code);
@@ -69,9 +97,9 @@ export default function PengajuanDetail() {
   /* tugas utama pelanggan: satu tombol di kepala halaman & bar bawah HP */
   let task = null;
   if (app.status === 'aksi') {
-    task = { title: st.code === 'ST-07' ? 'Kirim Tindakan Perbaikan' : 'Lengkapi Permintaan PSU', text: app.action_note, cta: 'Kirim Tanggapan', onClick: () => openSheet('reply') };
+    task = { title: st.code === 'ST-07' && app.flow !== '1B' ? 'Kirim Tindakan Perbaikan' : 'Lengkapi Permintaan PSU', text: app.action_note, cta: 'Kirim Tanggapan', onClick: () => openSheet('reply') };
   } else if (app.status === 'aktif' && st.is_payment_step && app.payment_status === 'invoice') {
-    task = { title: 'Lakukan Pembayaran', text: <>Invoice <b>{rupiah(app.payment.amount)}</b>{app.payment.due_date && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}. Transfer lalu unggah bukti bayar.</>, cta: 'Unggah Bukti Bayar', onClick: () => openSheet('pay'), extra: <button className="btn btn-link btn-sm p-0" style={{ minHeight: 0 }} onClick={() => setTab('invoice')}>Lihat Rincian Invoice</button> };
+    task = { title: 'Lakukan Pembayaran', text: <>Proforma invoice <b>{rupiah(app.payment.amount)}</b>{app.payment.due_date && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}. Transfer lalu unggah bukti bayar.</>, cta: 'Unggah Bukti Bayar', onClick: () => openSheet('pay'), extra: <button className="btn btn-link btn-sm p-0" style={{ minHeight: 0 }} onClick={() => setTab('invoice')}>Lihat Rincian Invoice</button> };
   } else if (active && nearest) {
     task = {
       title: `Kirim Bukti Perbaikan ${todoF.length > 1 ? `${todoF.length} Temuan` : `Temuan ${nearest.category[0].toUpperCase()}${nearest.category.slice(1)}`}`,
@@ -85,16 +113,17 @@ export default function PengajuanDetail() {
   }
   let info = null;
   if (!task && app.status === 'aktif') {
-    if (st.is_payment_step && app.payment_status === 'belum') info = 'PSU sedang menyiapkan invoice. Anda akan menerima email ketika invoice terbit.';
+    if (st.is_payment_step && app.payment_status === 'belum') info = 'PSU sedang menyiapkan proforma invoice. Anda akan menerima email ketika proforma invoice terbit.';
     else if (app.payment_status === 'menunggu') info = 'Bukti bayar sedang diverifikasi Admin.';
     else if (openF.length) info = 'Bukti perbaikan sudah dikirim dan sedang ditinjau PSU.';
     else if (app.condition === 'Ready for Collection') info = 'Kalibrasi selesai. Alat siap diambil atau dikirim kembali; hubungi contact person Laboratorium Kalibrasi.';
   }
 
   const mainBtn = task && <button className={`btn ${task.done ? 'btn-gold' : 'btn-primary'}`} onClick={task.onClick}>{task.icon && <i className={`bi bi-${task.icon}`} />}{task.cta}</button>;
-  // batal hanya selama PSU belum memproses; pengajuan batal bisa diajukan ulang dengan data lama
+  // batal hanya selama PSU belum memproses; pengajuan batal / ditutup PSU bisa diajukan ulang dengan data lama
+  const reapply = ['batal', 'ditolak'].includes(app.status);
   const more = app.can_cancel && <Menu items={[{ label: 'Batalkan Pengajuan', icon: 'x-circle', danger: true, onClick: () => openSheet('batal') }]} />;
-  const ctaBtn = (mainBtn || more || app.status === 'batal') ? <>{more}{mainBtn}{app.status === 'batal' && <Link to={`/klien/ajukan?dari=${id}`} className="btn btn-primary"><i className="bi bi-arrow-repeat" />Ajukan Ulang</Link>}</> : null;
+  const ctaBtn = (mainBtn || more || reapply) ? <>{more}{mainBtn}{reapply && <Link to={`/klien/ajukan?dari=${id}`} className="btn btn-primary"><i className="bi bi-arrow-repeat" />Ajukan Ulang</Link>}</> : null;
   const decision = task ? {
     title: task.done ? 'Dokumen' : 'Perlu Tindakan Anda',
     body: (
@@ -130,7 +159,7 @@ export default function PengajuanDetail() {
       <ApplicationView app={app} backTo="/klien/pengajuan" tab={tab} onTab={setTab}
         headerActions={ctaBtn} decision={decision}
         onDownloadDoc={(d) => download(`/applications/${id}/documents/${d.id}`, d.original_name).catch((e) => toast(errMsg(e), 'danger'))}
-        onDownloadInvoice={() => download(`/applications/${id}/invoice`, `Invoice-${app.payment.invoice_no.replace(/\//g, '-')}.pdf`).catch((e) => toast(errMsg(e), 'danger'))}
+        onDownloadInvoice={() => download(`/applications/${id}/invoice`, `Proforma-Invoice-${app.payment.invoice_no.replace(/\//g, '-')}.pdf`).catch((e) => toast(errMsg(e), 'danger'))}
         onDownloadProof={() => download(`/applications/${id}/payment-proof`, `bukti-bayar-${app.application_no}`).catch((e) => toast(errMsg(e), 'danger'))}
         findingActions={findingActions}>
         {survey}
@@ -140,16 +169,22 @@ export default function PengajuanDetail() {
         sub={K === 'batal' ? 'Pengajuan berhenti dan tidak diproses PSU. Setelah dibatalkan, Anda bisa mengajukan ulang dengan data yang sudah diperbaiki.' : K === 'reply' ? app.action_note : K === 'pay' ? `Total ${rupiah(app.payment?.amount)} · ${app.payment?.invoice_no || ''}` : sheet?.f ? `Temuan ${sheet.f.category} #${sheet.f.id}: ${sheet.f.description}` : ''}
         footer={<><button className="btn btn-outline-secondary" disabled={busy} onClick={() => setSheet(null)}>Batal</button><button className={`btn ${K === 'batal' ? 'btn-danger' : 'btn-primary'}`} disabled={busy} onClick={submit}>{busy ? 'Mengirim…' : K === 'batal' ? 'Ya, Batalkan' : 'Kirim'}</button></>}>
         <div className="d-flex flex-column gap-3">
+          {K === 'bukti' && ANS_FIELDS.map(([key, label, hint]) => (
+            <div key={key}>
+              <label className="form-label" htmlFor={`cs-${key}`}>{label} <span className="text-danger">*</span></label>
+              <textarea id={`cs-${key}`} className="form-control" rows={2} value={ans[key] || ''} placeholder={hint} onChange={(e) => changeAns(key, e.target.value)} />
+            </div>
+          ))}
           {K !== 'pay' && (
             <div>
-              <label className="form-label" htmlFor="cs-note">{K === 'batal' ? 'Alasan Pembatalan' : K === 'ext' ? 'Alasan Perpanjangan' : K === 'bukti' ? 'Keterangan Perbaikan' : 'Tanggapan / Keterangan'}</label>
-              <textarea id="cs-note" className="form-control" rows={3} value={note} onChange={(e) => changeNote(e.target.value)} />
+              <label className="form-label" htmlFor="cs-note">{K === 'batal' ? 'Alasan Pembatalan' : K === 'ext' ? 'Alasan Perpanjangan' : K === 'bukti' ? <>Keterangan Tambahan <span className="fw-normal text-muted2">(opsional)</span></> : 'Tanggapan / Keterangan'}</label>
+              <textarea id="cs-note" className="form-control" rows={K === 'bukti' ? 2 : 3} value={note} onChange={(e) => changeNote(e.target.value)} />
               {K === 'ext' && <div className="form-text">Perpanjangan hanya dapat diajukan satu kali dan perlu disetujui PSU.</div>}
             </div>
           )}
-          {K !== 'ext' && K !== 'batal' && (
+          {K !== 'batal' && (
             <div>
-              <label className="form-label" htmlFor="cs-file">{K === 'pay' ? 'File Bukti Transfer' : K === 'bukti' ? 'Bukti Perbaikan' : st.code === 'ST-07' ? 'Unggah Tindakan Perbaikan' : 'Dokumen / Data yang Diminta'}</label>
+              <label className="form-label" htmlFor="cs-file">{K === 'pay' ? 'File Bukti Transfer' : K === 'bukti' ? <>File Bukti Perbaikan <span className="text-danger">*</span></> : K === 'ext' ? <>Lampiran Pendukung <span className="fw-normal text-muted2">(opsional)</span></> : st.code === 'ST-07' && app.flow !== '1B' ? 'Unggah Tindakan Perbaikan' : 'Dokumen / Data yang Diminta'}</label>
               <FileDrop id="cs-file" multiple={K !== 'pay'} files={files} onChange={setFiles} />
             </div>
           )}

@@ -16,7 +16,7 @@ const { UPLOAD_DIR } = require('../utils/upload');
 const sign = (u) => jwt.sign({ id: u.id, role: u.role }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES || '1d' });
 const publicUser = (u) => ({
   id: u.id, role: u.role, name: u.name, email: u.email, jabatan: u.jabatan, bidang: u.bidang, company_name: u.company_name,
-  phone: u.phone || '', address: u.address || '',
+  phone: u.phone || '', address: u.address || '', nib: u.nib || '', npwp: u.npwp || '',
   avatar_url: u.avatar ? `/api/public/avatar/${u.avatar}` : null,
   must_change_password: !!u.must_change_password,
 });
@@ -53,11 +53,12 @@ const addFail = (key) => {
 
 router.post('/login', async (req, res, next) => {
   try {
-    const { email, password } = req.body;
+    const email = String(req.body.email || '').trim().toLowerCase();
+    const { password } = req.body;
     const key = failKey(req, email);
     const wait = lockedFor(key);
     if (wait) return res.status(429).json({ message: `Terlalu banyak percobaan masuk. Coba lagi dalam ${wait} menit.` });
-    const user = await one('SELECT * FROM users WHERE email=?', [email || '']);
+    const user = await one('SELECT * FROM users WHERE email=?', [email]);
     if (!user || !user.is_active || !(await bcrypt.compare(password || '', user.password_hash))) {
       addFail(key);
       return res.status(401).json({ message: 'Email atau kata sandi salah.' });
@@ -72,11 +73,13 @@ router.get('/me', requireAuth, (req, res) => res.json(publicUser(req.user)));
 /** Pengaturan akun: nama, telepon, alamat. Email & perusahaan dikelola Admin. */
 router.put('/profile', requireAuth, async (req, res, next) => {
   try {
-    // data akun pelanggan hanya boleh diubah Admin / Super Admin (menu Akun Pelanggan)
-    if (req.user.role === 'user') return res.status(403).json({ message: 'Data akun pelanggan hanya dapat diubah oleh Admin PSU.' });
+    // pelanggan hanya dapat mengubah nama penanggung jawab & telepon; data perusahaan (nama, NIB, NPWP, alamat)
+    // dipakai di invoice & sertifikat sehingga diubah lewat Admin PSU (menu Akun Pelanggan)
+    const customer = req.user.role === 'user';
     const name = String(req.body.name || '').trim();
     const phone = String(req.body.phone || '').trim();
-    const address = String(req.body.address || '').trim();
+    const address = customer ? String(req.user.address || '') : String(req.body.address || '').trim();
+    if (customer && !phone) return res.status(400).json({ message: 'Nomor telepon wajib diisi.' });
     if (name.length < 2 || name.length > 120) return res.status(400).json({ message: 'Nama minimal 2 dan maksimal 120 karakter.' });
     if (phone && !/^[0-9+()\-\s]{6,30}$/.test(phone)) return res.status(400).json({ message: 'Nomor telepon tidak valid.' });
     if (address.length > 255) return res.status(400).json({ message: 'Alamat maksimal 255 karakter.' });

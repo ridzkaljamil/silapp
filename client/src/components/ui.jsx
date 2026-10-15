@@ -1,10 +1,10 @@
 /**
  * Pintu impor komponen UI bersama. Setiap bagian ada di file tersendiri:
- *   lib/format.js          format tanggal, rupiah, inisial
+ *   lib/format.js          format tanggal, rupiah, inisial, pajak invoice
  *   components/display.jsx status, progres, riwayat, PageHead, Avatar, CountUp
  *   components/feedback.jsx dialog konfirmasi, toast, Loading
  *   components/overlays.jsx Sheet (pop-up / lembar bawah), Menu
- *   components/forms.jsx    Select (dropdown), FileDrop
+ *   components/forms.jsx    Select (dropdown), FileDrop, MoneyInput (isian Rupiah)
  *   components/MobileList.jsx daftar ringkas HP
  *   components/DataToolbar.jsx kolom cari + filter daftar data
  *   hooks/useReveal.js      animasi muncul saat scroll

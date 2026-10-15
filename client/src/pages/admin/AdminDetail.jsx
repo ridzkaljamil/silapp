@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom';
 import api, { errMsg, download } from '../../api';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import { useAuth } from '../../AuthContext';
-import { Loading, useToast, fmtDate, fmtDateTime, Sheet, Menu, FileDrop, todayYmd, addMonths } from '../../components/ui';
+import { Loading, useToast, fmtDate, fmtDateTime, Sheet, Menu, FileDrop, todayYmd, addMonths, MAX_FILE_MB, useConfirm } from '../../components/ui';
 import ApplicationView from '../../components/ApplicationView';
 import { docWord } from '../../lib/constants';
 import InvoiceForm from './detail/InvoiceForm';
@@ -24,6 +24,7 @@ export default function AdminDetail() {
   const { id } = useParams();
   const { user } = useAuth();
   const toast = useToast();
+  const confirm = useConfirm();
   const [app, setApp] = useState(null);
   const [err, setErr] = useState('');
   const [mode, setMode] = useState(null);
@@ -47,10 +48,12 @@ export default function AdminDetail() {
   const isSA = user.role === 'superadmin';
   const payBlocked = st.is_payment_step && app.payment_status !== 'terverifikasi';
   const paramsOpen = app.parameters.some((p) => p.status !== 'selesai') && st.code === 'LAB-04';
-  const findingsOpen = st.code === 'ST-07' && app.open_findings > 0;
+  // alur Tipe 1b: tanpa audit/temuan dan tanpa tahap Tindakan Perbaikan
+  const is1B = app.flow === '1B';
+  const findingsOpen = !is1B && st.code === 'ST-07' && app.open_findings > 0;
   const blocked = payBlocked || paramsOpen || findingsOpen;
-  const blockReason = payBlocked ? (app.payment_status === 'menunggu' ? 'Periksa dan verifikasi bukti bayar terlebih dahulu.' : 'Terbitkan invoice dan tunggu bukti bayar pelanggan.') : paramsOpen ? 'Masih ada parameter yang belum selesai.' : findingsOpen ? `Masih ada ${app.open_findings} temuan mayor/minor terbuka.` : '';
-  const findingStage = app.service_code === 'SP' && ['ST-05', 'ST-06', 'ST-07'].includes(st.code) && open;
+  const blockReason = payBlocked ? (app.payment_status === 'menunggu' ? 'Periksa dan verifikasi bukti bayar terlebih dahulu.' : 'Terbitkan proforma invoice dan tunggu bukti bayar pelanggan.') : paramsOpen ? 'Masih ada parameter yang belum selesai.' : findingsOpen ? `Masih ada ${app.open_findings} temuan mayor/minor terbuka.` : '';
+  const findingStage = app.service_code === 'SP' && !is1B && ['ST-05', 'ST-06', 'ST-07'].includes(st.code) && open;
   const dw = docWord(app.service_code);
   const curIdx = app.steps.findIndex((s) => ['current', 'action'].includes(s.state));
   // tahap berikutnya setelah Setujui (ST-07 dilewati jika tanpa temuan terbuka, KAL-09 jika on-site)
@@ -65,6 +68,13 @@ export default function AdminDetail() {
     const action = mode;
     if ((action === 'minta_tindakan' || action === 'tolak') && !f.note.trim()) return toast(action === 'tolak' ? 'Isi alasan penolakan dulu.' : 'Isi tindakan yang diminta dulu.', 'danger');
     if (action === 'abaikan' && !f.note.trim() && !files.length) return toast('Isi catatan atau pilih lampiran.', 'danger');
+    // Setujui: pop-up ini sendiri sudah berupa konfirmasi; aksi lain ditanyakan sekali lagi
+    const ask = {
+      minta_tindakan: { title: 'Kirim Permintaan Tindakan?', body: 'Status berubah menjadi Action Required dan pelanggan menerima email berisi catatan ini.', ok: 'Ya, Kirim', icon: 'send' },
+      abaikan: { title: f.internal ? 'Simpan Catatan Internal?' : 'Kirim Catatan / Lampiran?', body: f.internal ? 'Catatan dan lampiran hanya terlihat oleh PSU.' : 'Catatan dan lampiran akan terlihat oleh pelanggan. Status tidak berubah.', ok: f.internal ? 'Ya, Simpan' : 'Ya, Kirim', icon: 'chat-left-text' },
+      tolak: { title: 'Tutup Pengajuan Ini?', body: 'Pengajuan ditutup (Closed) dan tidak dapat dilanjutkan. Pelanggan menerima email berisi alasan penolakan.', ok: 'Ya, Tutup Pengajuan', danger: true, icon: 'x-octagon' },
+    }[action];
+    if (ask && !(await confirm(ask))) return null;
     const fd = new FormData();
     fd.append('action', action); fd.append('step', st.order); fd.append('note', f.note); fd.append('internal', f.internal ? '1' : '0'); fd.append('doc_name', f.doc_name);
     if (f.certificate_no) fd.append('certificate_no', f.certificate_no);
@@ -78,10 +88,17 @@ export default function AdminDetail() {
     } catch (e) { fail(e); } finally { setBusy(false); }
   };
   const onParam = async (pid, status) => {
+    const p = app.parameters.find((x) => x.id === pid);
+    const label = { antri: 'Antri', uji: 'Sedang diuji', selesai: 'Selesai' }[status] || status;
+    if (!(await confirm({ title: 'Ubah Status Parameter?', body: <>Status <b>{p?.name || 'parameter'}</b> menjadi <b>{label}</b>.</>, ok: 'Ya, Ubah', icon: 'list-check' }))) return;
     try { setApp((await api.patch(`/admin/applications/${id}/parameters/${pid}`, { status })).data); } catch (e) { toast(errMsg(e), 'danger'); }
   };
   const verify = async (valid) => {
     if (!valid && !payNote.trim()) return toast('Isi alasan bukti bayar ditolak.', 'danger');
+    const ok = await confirm(valid
+      ? { title: 'Verifikasi Pembayaran?', body: 'Bukti bayar dinyatakan sah dan pembayaran tercatat lunas.', ok: 'Ya, Verifikasi', icon: 'patch-check' }
+      : { title: 'Tolak Bukti Bayar?', body: 'Pelanggan diminta mengunggah ulang bukti bayar dengan alasan yang Anda tulis.', ok: 'Ya, Tolak', danger: true, icon: 'x-circle' });
+    if (!ok) return null;
     try { setApp((await api.post(`/admin/applications/${id}/payment/verify`, { valid, note: payNote, step: st.order })).data); setPayNote(''); toast(valid ? 'Pembayaran terverifikasi.' : 'Pelanggan diminta mengunggah ulang bukti bayar.'); } catch (e) { fail(e); }
   };
   const zip = async () => {
@@ -90,6 +107,11 @@ export default function AdminDetail() {
   const extFindings = app.findings.filter((x) => x.extension_status === 'diajukan' && x.status !== 'ditutup');
   const sentFindings = app.findings.filter((x) => x.status === 'dikirim');
   const setFinding = async (fd, op) => {
+    const ask = {
+      perpanjang_setuju: { title: 'Setujui Perpanjangan?', body: <>Tenggat temuan {fd.category} #{fd.id} diperpanjang 1 bulan dan pelanggan menerima email.</>, ok: 'Ya, Setujui', icon: 'calendar-plus' },
+      tutup: { title: 'Tutup Temuan?', body: <>Temuan {fd.category} #{fd.id} ditandai selesai.</>, ok: 'Ya, Tutup', icon: 'check2-circle' },
+    }[op];
+    if (ask && !(await confirm(ask))) return;
     try { setApp((await api.patch(`/admin/applications/${id}/findings/${fd.id}`, { op })).data); toast('Temuan diperbarui.'); } catch (e) { toast(errMsg(e), 'danger'); }
   };
 
@@ -127,8 +149,8 @@ export default function AdminDetail() {
   ));
   if (open && st.is_payment_step && ['belum', 'invoice'].includes(app.payment_status)) items.push(
     <div key="inv" className="decision-item">
-      <div>{app.payment_status === 'belum' ? 'Invoice belum diterbitkan.' : `Invoice terbit, menunggu pelanggan membayar${app.payment?.due_date ? ` (jatuh tempo ${fmtDate(app.payment.due_date)})` : ''}.`}</div>
-      <button className={`btn btn-sm mt-2 ${app.payment_status === 'belum' ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setInvOpen(true)}>{app.payment_status === 'belum' ? 'Terbitkan Invoice' : 'Perbarui Invoice'}</button>
+      <div>{app.payment_status === 'belum' ? 'Proforma invoice belum diterbitkan.' : `Proforma invoice terbit, menunggu pelanggan membayar${app.payment?.due_date ? ` (jatuh tempo ${fmtDate(app.payment.due_date)})` : ''}.`}</div>
+      <button className={`btn btn-sm mt-2 ${app.payment_status === 'belum' ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setInvOpen(true)}>{app.payment_status === 'belum' ? 'Terbitkan Proforma Invoice' : 'Perbarui Proforma Invoice'}</button>
     </div>,
   );
   if (open && app.payment_status === 'menunggu') items.push(
@@ -162,7 +184,7 @@ export default function AdminDetail() {
         labPanel={app.service_code === 'SP' && st.code === 'ST-06' && open ? <LabInfoForm app={app} onSaved={setApp} /> : null}
         onParam={open && st.code === 'LAB-04' ? onParam : undefined}
         onDownloadDoc={(d) => download(`/admin/applications/${id}/documents/${d.id}`, d.original_name)}
-        onDownloadInvoice={() => download(`/admin/applications/${id}/invoice`, `Invoice-${app.payment.invoice_no.replace(/\//g, '-')}.pdf`)}
+        onDownloadInvoice={() => download(`/admin/applications/${id}/invoice`, `Proforma-Invoice-${app.payment.invoice_no.replace(/\//g, '-')}.pdf`)}
         onDownloadProof={() => download(`/admin/applications/${id}/payment-proof`, `bukti-bayar-${app.application_no}`)}
         findingActions={open ? (fd) => (fd.status === 'ditutup' ? null : fd.category === 'observasi'
           ? <button className="btn btn-sm btn-outline-secondary" onClick={() => setFinding(fd, 'tutup')}>Tutup</button>
@@ -189,12 +211,12 @@ export default function AdminDetail() {
         <div className="d-flex flex-column gap-3">
           {mode === 'setujui' && st.is_certificate_step && (
             <div className="row g-3">
-              <div className="col-md-6"><label className="form-label" htmlFor="cn">Nomor {dw}</label><input id="cn" className="form-control" value={f.certificate_no} onChange={(e) => setF({ ...f, certificate_no: e.target.value })} placeholder={app.service_code === 'SP' ? 'PSU-SPPT-2026-00125' : app.service_code === 'KAL' ? 'KAL/PSU/2026/00125' : 'LHU/PSU/2026/00125'} /></div>
-              <div className="col-md-6"><label className="form-label" htmlFor="cf">File {dw} resmi (PDF)</label><FileDrop id="cf" accept=".pdf" files={certFile ? [certFile] : []} onChange={(l) => setCertFile(l[0])} label={`Pilih file ${dw}`} hint="PDF · maks. 10 MB" /></div>
+              <div className="col-md-6"><label className="form-label" htmlFor="cn">Nomor {dw}</label><input id="cn" className="form-control" maxLength={60} value={f.certificate_no} onChange={(e) => setF({ ...f, certificate_no: e.target.value })} placeholder={app.service_code === 'SP' ? 'PSU-SPPT-2026-00125' : app.service_code === 'KAL' ? 'KAL/PSU/2026/00125' : 'LHU/PSU/2026/00125'} /></div>
+              <div className="col-md-6"><label className="form-label" htmlFor="cf">File {dw} resmi (PDF)</label><FileDrop id="cf" accept=".pdf" files={certFile ? [certFile] : []} onChange={(l) => setCertFile(l[0])} label={`Pilih file ${dw}`} hint={`PDF · maks. ${MAX_FILE_MB} MB`} /></div>
               <div className="col-12 small text-muted2">Pelanggan wajib mengisi survei kepuasan sebelum dapat mengunduh {dw}.</div>
             </div>
           )}
-          {mode === 'minta_tindakan' && st.code === 'ST-06' && <div className="small text-muted2">Hasil uji tidak sesuai? Minta tindakan akan memindahkan pengajuan ke ST-07.</div>}
+          {mode === 'minta_tindakan' && st.code === 'ST-06' && !is1B && <div className="small text-muted2">Hasil uji tidak sesuai? Minta tindakan akan memindahkan pengajuan ke ST-07.</div>}
           <div>
             <label className="form-label" htmlFor="an">{mode === 'tolak' ? 'Alasan Penolakan' : mode === 'minta_tindakan' ? 'Tindakan yang Diminta dari Pelanggan' : 'Catatan'} {['setujui', 'abaikan'].includes(mode) && <span className="fw-normal text-muted2">(opsional)</span>}</label>
             <textarea id="an" className="form-control" rows={3} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder={mode === 'minta_tindakan' ? 'Contoh: Lengkapi data teknis produk dan foto label.' : 'Contoh: Sampel diterima dalam kondisi baik.'} />
@@ -210,7 +232,7 @@ export default function AdminDetail() {
         </div>
       </Sheet>
 
-      <Sheet open={invOpen} onClose={() => setInvOpen(false)} wide icon="receipt" title={app.payment_status === 'belum' ? 'Terbitkan Invoice' : 'Perbarui Invoice'} sub={`${app.application_no} · ${app.company_name}`}>
+      <Sheet open={invOpen} onClose={() => setInvOpen(false)} wide icon="receipt" title={app.payment_status === 'belum' ? 'Terbitkan Proforma Invoice' : 'Perbarui Proforma Invoice'} sub={`${app.application_no} · ${app.company_name}`}>
         <InvoiceForm key={app.payment?.created_at || 'new'} app={app} onSaved={(d) => { setApp(d); setInvOpen(false); }} onStale={() => { setInvOpen(false); load(); }} />
       </Sheet>
       <FindingReview f={review} app={app} onChange={setApp} onClose={() => setReview(null)} onDownloadDoc={(d) => download(`/admin/applications/${id}/documents/${d.id}`, d.original_name)} />

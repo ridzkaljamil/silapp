@@ -1,10 +1,11 @@
-import { useRef, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api, { errMsg } from '../../api';
 import { useAuth } from '../../AuthContext';
 import { Avatar, PageHead, useToast, useConfirm } from '../../components/ui';
 import { useSignOut } from '../../components/Layouts';
 import { roleLabel } from '../../lib/constants';
+import { shrinkImage } from '../../lib/image';
 
 
 /** Pengaturan akun: foto profil, data diri, keamanan. Dipakai semua role. */
@@ -22,7 +23,9 @@ export default function Akun() {
   const dirty = f.name !== (user.name || '') || f.phone !== (user.phone || '') || f.address !== (user.address || '');
 
   const save = async (e) => {
-    e.preventDefault(); setBusy(true);
+    e.preventDefault();
+    if (busy || !(await confirm({ title: 'Simpan Perubahan Akun?', body: isUser ? 'Nama penanggung jawab dan nomor telepon diperbarui.' : 'Data diri Anda diperbarui.', ok: 'Ya, Simpan', icon: 'person-check' }))) return;
+    setBusy(true);
     try { setSessionUser((await api.put('/auth/profile', f)).data.user); toast('Perubahan akun disimpan.'); }
     catch (ex) { toast(errMsg(ex), 'danger'); } finally { setBusy(false); }
   };
@@ -31,9 +34,12 @@ export default function Akun() {
     e.target.value = '';
     if (!file) return;
     if (!/\.(jpe?g|png)$/i.test(file.name)) return toast('Format foto harus JPG atau PNG.', 'danger');
-    if (file.size > 2 * 1024 * 1024) return toast('Ukuran foto maksimal 2 MB.', 'danger');
-    const fd = new FormData(); fd.append('avatar', file);
+    if (!(await confirm({ title: user.avatar_url ? 'Ganti Foto Profil?' : 'Unggah Foto Profil?', body: <>Foto <b>{file.name}</b> dipakai sebagai foto profil Anda.</>, ok: 'Ya, Simpan Foto', icon: 'person-bounding-box' }))) return;
     setUp(true);
+    // diperkecil dulu di perangkat agar unggah & tampil cepat
+    const small = await shrinkImage(file);
+    if (small.size > 2 * 1024 * 1024) { setUp(false); return toast('Ukuran foto maksimal 2 MB.', 'danger'); }
+    const fd = new FormData(); fd.append('avatar', small);
     try { setSessionUser((await api.post('/auth/avatar', fd)).data.user); toast('Foto profil diperbarui.'); }
     catch (ex) { toast(errMsg(ex), 'danger'); } finally { setUp(false); }
   };
@@ -45,7 +51,7 @@ export default function Akun() {
 
   return (
     <div style={{ maxWidth: 860 }}>
-      <PageHead eyebrow="Akun" title="Pengaturan Akun" sub={isUser ? "Ubah foto profil Anda. Data akun dan perusahaan dikelola oleh Admin PSU." : "Ubah foto profil dan data diri Anda."} />
+      <PageHead eyebrow="Akun" title="Pengaturan Akun" sub={isUser ? "Lihat data perusahaan, ubah foto profil, nama penanggung jawab, dan nomor telepon." : "Ubah foto profil dan data diri Anda."} />
       <div className="d-flex flex-column gap-3">
         <section className="panel">
           <div className="panel-h"><h2 className="mb-0">Foto Profil</h2></div>
@@ -59,32 +65,41 @@ export default function Akun() {
                 <button type="button" className="btn btn-primary" onClick={() => fileRef.current?.click()} disabled={up}><i className="bi bi-upload" />{user.avatar_url ? 'Ganti Foto' : 'Unggah Foto'}</button>
                 {user.avatar_url && <button type="button" className="btn btn-outline-secondary" onClick={removePhoto} disabled={up}><i className="bi bi-trash" />Hapus</button>}
               </div>
-              <span className="small text-muted2">JPG atau PNG, maksimal 2 MB. Disarankan foto persegi.</span>
+              <span className="small text-muted2">JPG atau PNG. Foto otomatis diperkecil agar cepat dimuat; disarankan foto persegi.</span>
             </div>
             <input ref={fileRef} type="file" accept=".jpg,.jpeg,.png" className="d-none" onChange={pick} />
           </div>
         </section>
 
+        {isUser && (
+          <section className="panel">
+            <div className="panel-h"><h2 className="mb-0">Data Perusahaan</h2><span className="small text-muted2">Diubah melalui Admin PSU</span></div>
+            <dl className="panel-b dl-grid dl-wide mb-0">
+              {[['Nama Perusahaan', user.company_name], ['NIB', user.nib], ['NPWP', user.npwp], ['Alamat Perusahaan (Sesuai NPWP)', user.address], ['Email Akun', user.email]].map(([k, v]) => (
+                <Fragment key={k}><dt>{k}</dt><dd style={{ whiteSpace: 'pre-line' }}>{v || <span className="text-muted2">Belum diisi</span>}</dd></Fragment>
+              ))}
+            </dl>
+            <div className="panel-b pt-0 small text-muted2">Data perusahaan dipakai di proforma invoice dan sertifikat. Perlu mengubahnya? Hubungi Admin PSU melalui WhatsApp atau email.</div>
+          </section>
+        )}
+
         <form className="panel" onSubmit={save}>
-          <div className="panel-h"><h2 className="mb-0">{isUser ? 'Data Akun' : 'Data Diri'}</h2>{isUser && <span className="small text-muted2">Hanya dapat diubah oleh Admin PSU</span>}</div>
+          <div className="panel-h"><h2 className="mb-0">{isUser ? 'Penanggung Jawab' : 'Data Diri'}</h2></div>
           <div className="panel-b">
             <div className="row g-3">
-              <div className="col-md-6"><label className="form-label" htmlFor="ak-nm">Nama Lengkap</label><input id="ak-nm" className="form-control" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required minLength={2} maxLength={120} disabled={isUser} /></div>
-              <div className="col-md-6"><label className="form-label" htmlFor="ak-ph">Nomor Telepon / WhatsApp</label><input id="ak-ph" className="form-control" inputMode="tel" placeholder="08xxxxxxxxxx" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} maxLength={30} disabled={isUser} /></div>
-              <div className="col-md-6"><label className="form-label" htmlFor="ak-em">Email</label><input id="ak-em" className="form-control" value={user.email} disabled /><div className="form-text">Email dipakai untuk masuk. Hubungi Admin PSU untuk mengubahnya.</div></div>
-              {isUser ? (
-                <div className="col-md-6"><label className="form-label" htmlFor="ak-co">Perusahaan</label><input id="ak-co" className="form-control" value={user.company_name || ''} disabled /><div className="form-text">Data perusahaan dikelola oleh Admin PSU.</div></div>
-              ) : (
+              <div className="col-md-6"><label className="form-label" htmlFor="ak-nm">{isUser ? 'Nama Penanggung Jawab' : 'Nama Lengkap'}</label><input id="ak-nm" className="form-control" value={f.name} onChange={(e) => setF({ ...f, name: e.target.value })} required minLength={2} maxLength={120} /></div>
+              <div className="col-md-6"><label className="form-label" htmlFor="ak-ph">Nomor Telepon / WhatsApp</label><input id="ak-ph" className="form-control" inputMode="tel" placeholder="08xxxxxxxxxx" value={f.phone} onChange={(e) => setF({ ...f, phone: e.target.value })} maxLength={30} required={isUser} /></div>
+              {!isUser && <>
+                <div className="col-md-6"><label className="form-label" htmlFor="ak-em">Email</label><input id="ak-em" className="form-control" value={user.email} disabled /><div className="form-text">Email dipakai untuk masuk. Hubungi Super Admin untuk mengubahnya.</div></div>
                 <div className="col-md-6"><label className="form-label" htmlFor="ak-rl">Peran</label><input id="ak-rl" className="form-control" value={roleLabel(user)} disabled /></div>
-              )}
-              <div className="col-12"><label className="form-label" htmlFor="ak-ad">{isUser ? 'Alamat Perusahaan' : 'Alamat'}</label><textarea id="ak-ad" className="form-control" rows={2} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} maxLength={255} disabled={isUser} />
-                {isUser && <div className="form-text">Perlu mengubah data? Hubungi Admin PSU melalui WhatsApp atau email.</div>}</div>
+                <div className="col-12"><label className="form-label" htmlFor="ak-ad">Alamat</label><textarea id="ak-ad" className="form-control" rows={2} value={f.address} onChange={(e) => setF({ ...f, address: e.target.value })} maxLength={255} /></div>
+              </>}
             </div>
           </div>
-          {!isUser && <div className="panel-f">
+          <div className="panel-f">
             <button type="button" className="btn btn-outline-secondary" disabled={!dirty || busy} onClick={() => setF({ name: user.name || '', phone: user.phone || '', address: user.address || '' })}>Batal</button>
             <button className="btn btn-primary" disabled={!dirty || busy}>{busy ? 'Menyimpan…' : 'Simpan Perubahan'}</button>
-          </div>}
+          </div>
         </form>
 
         <section className="panel">
