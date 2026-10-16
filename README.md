@@ -4,13 +4,15 @@
 
 SILAPP digunakan pelanggan untuk mengajukan layanan dan memantau status pengajuan secara daring, sedangkan Admin dan Super Admin memakainya untuk memproses pengajuan, mengelola data, dan mencatat setiap perubahan status.
 
+Layanan yang didukung: Sertifikasi Produk (LSPro, termasuk alur khusus skema Tipe 1b), Laboratorium Pengujian (Kimia, Fisika, Mikrobiologi), dan Laboratorium Kalibrasi. Riwayat perubahan ada di [CHANGELOG.md](CHANGELOG.md).
+
 ## Fitur
 
 - **Publik:** lacak status pengajuan dengan kode lacak (tanpa login) dan informasi layanan beserta ruang lingkupnya.
-- **Pelanggan:** mengajukan layanan, mengunduh template dokumen, membatalkan pengajuan yang belum diproses lalu mengajukan ulang, mengunggah dokumen dan bukti bayar, mengunduh proforma invoice PDF, membalas permintaan tindakan atau temuan, mengunduh sertifikat/LHU, mengisi survei kepuasan, dan melihat Directory sertifikat.
-- **Admin:** antrean pengajuan per bidang, persetujuan tiap tahap, invoice, verifikasi pembayaran, riwayat per tahap, temuan audit, parameter uji lab, akun pelanggan, dan dashboard.
+- **Pelanggan:** mengajukan layanan, mengunduh template dokumen berkop PSU, membatalkan pengajuan yang belum diproses lalu mengajukan ulang (juga untuk pengajuan yang ditutup PSU), mengunggah dokumen dan bukti bayar, mengunduh proforma invoice PDF, membalas permintaan tindakan, mengirim bukti perbaikan temuan (koreksi, akar penyebab, tindakan korektif) dan mengajukan perpanjangan, mengunduh sertifikat/LHU, mengisi survei kepuasan, dan melihat Directory sertifikat.
+- **Admin:** antrean pengajuan per bidang, persetujuan tiap tahap, proforma invoice, verifikasi pembayaran, riwayat per tahap, temuan audit, parameter uji lab, akun pelanggan, dan dashboard.
 - **Super Admin:** semua fitur Admin, ditambah pengguna internal, Kelola Layanan (detail & tahapan, form pengajuan, ruang lingkup & harga, identitas invoice dan kontak), template dokumen, survei, serta data sertifikat. Rekap survei kepuasan per layanan bisa diberi catatan tindak lanjut dan diekspor ke Excel/CSV.
-- Notifikasi di aplikasi dan lewat email, pengaturan akun dengan foto profil, dan tampilan responsif untuk HP.
+- Notifikasi di aplikasi dan lewat email, konfirmasi sebelum setiap aksi penting, indikator "Sedang memproses…", pengaturan akun dengan foto profil, dan tampilan responsif untuk HP.
 
 ## Teknologi
 
@@ -35,14 +37,16 @@ Yang perlu disiapkan: Node.js 18 atau lebih baru dan MySQL (misalnya lewat XAMPP
 3. Dari folder utama proyek, jalankan:
    ```bash
    npm install        # meng-install server dan client
-   npm run db:reset   # membuat tabel dan data awal (menghapus data lama)
+   npm run db:reset   # membuat tabel dan data contoh (menghapus semua data lama)
    npm run dev        # API di :5000, web di :5173
    ```
 4. Buka http://localhost:5173.
 
+Database yang sudah berjalan tidak perlu di-reset saat memperbarui aplikasi: kolom dan data baru ditambahkan otomatis ketika server dinyalakan.
+
 ## Akun demo
 
-Kata sandi semua akun: `password123`
+Akun ini dibuat oleh `npm run db:reset` dan hanya untuk pengembangan atau demo. Kata sandi semua akun: `password123`
 
 | Role | Email |
 |---|---|
@@ -70,6 +74,12 @@ npm start       # Express menyajikan API dan client di satu port
 
 Folder `server/uploads/` menyimpan dokumen unggahan, jadi pastikan folder itu dapat ditulis dan ikut dibackup.
 
+Sebelum dipakai di server resmi:
+
+- **Jangan jalankan `npm run db:reset`** di server resmi. Perintah itu membuat data contoh dan akun dengan kata sandi `password123`.
+- Isi `JWT_SECRET` dengan teks acak panjang yang baru, `CLIENT_URL` dengan alamat domain (https), dan `TRUST_PROXY=1` bila aplikasi berjalan di belakang cPanel atau Nginx.
+- Gunakan email SMTP dari domain sendiri agar email notifikasi tidak masuk spam.
+
 ## Struktur folder
 
 ```
@@ -88,4 +98,4 @@ silapp/
 
 ## Pengembang
 
-Ridzkal Jamil · Universitas Pelita Bangsa
+Team Tracking SILAPP · BBPVP Bekasi Batch 4 2026
