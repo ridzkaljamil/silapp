@@ -1,4 +1,4 @@
-import { defineConfig, createLogger } from 'vite';
+import { defineConfig, createLogger, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import { purgeCSSPlugin as purgeCSS } from '@fullhuman/postcss-purgecss';
 
@@ -36,9 +36,29 @@ logger.error = (msg, opts) => {
   logError(msg, opts);
 };
 
-export default defineConfig(({ command }) => ({
+/**
+ * Pratinjau tautan (WhatsApp, Facebook, dll.) butuh alamat lengkap aplikasi untuk og:url & og:image.
+ * Sumber: SITE_URL / VITE_SITE_URL saat build (npm run pack:cpanel -- https://domain), atau domain produksi Vercel.
+ * Tanpa alamat, kedua tag itu dibuang dan pratinjau tetap tampil tanpa gambar.
+ */
+function siteUrl(mode) {
+  const env = loadEnv(mode, process.cwd(), '');
+  const url = env.SITE_URL || env.VITE_SITE_URL || (env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${env.VERCEL_PROJECT_PRODUCTION_URL}` : '');
+  return url.trim().replace(/\/+$/, '');
+}
+const ogTags = (mode) => ({
+  name: 'og-site-url',
+  transformIndexHtml(html) {
+    const url = siteUrl(mode);
+    return url ? html.replaceAll('%SITE_URL%', url) : html.replace(/^\s*<meta property="og:(url|image)" content="%SITE_URL%[^>]*>\n/gm, '');
+  },
+});
+
+export default defineConfig(({ command, mode }) => ({
   customLogger: logger,
-  plugins: [react()],
+  // mode penyimpanan file untuk client: 'blob' jika build di Vercel dengan Blob store terhubung (token tidak ikut ke browser)
+  define: { __UPLOAD_MODE__: JSON.stringify(process.env.BLOB_READ_WRITE_TOKEN ? 'blob' : 'local') },
+  plugins: [react(), ogTags(mode)],
   server: {
     port: 5173,
     proxy: {

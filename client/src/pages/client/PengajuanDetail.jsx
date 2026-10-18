@@ -106,6 +106,8 @@ export default function PengajuanDetail() {
       text: nearest.due_date ? <>Paling lambat {fmtDate(nearest.due_date)} · {nearest.days_left < 0 ? `terlambat ${-nearest.days_left} hari` : `sisa ${nearest.days_left} hari`}</> : null,
       cta: 'Kirim Bukti Perbaikan', onClick: () => openSheet('bukti', nearest),
     };
+  } else if (app.status === 'selesai' && app.certificate?.can_download === false) {
+    // sertifikat dicabut: tidak ada tindakan, file tidak bisa diunduh (alasan tampil di kotak sertifikat)
   } else if (app.status === 'selesai' && app.certificate && !app.survey_done) {
     task = { title: 'Isi Survei Kepuasan', text: `Survei wajib diisi sebelum mengunduh ${dw}.`, cta: 'Isi Survei', onClick: () => document.getElementById('sv-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) };
   } else if (app.status === 'selesai' && app.certificate && app.survey_done) {
@@ -118,6 +120,7 @@ export default function PengajuanDetail() {
     else if (openF.length) info = 'Bukti perbaikan sudah dikirim dan sedang ditinjau PSU.';
     else if (app.condition === 'Ready for Collection') info = 'Kalibrasi selesai. Alat siap diambil atau dikirim kembali; hubungi contact person Laboratorium Kalibrasi.';
   }
+  if (!task && app.certificate?.can_download === false) info = `${dw[0].toUpperCase()}${dw.slice(1)} ${app.certificate.certificate_no} telah dicabut dan tidak berlaku lagi, sehingga tidak dapat diunduh. Hubungi PSU untuk informasi lebih lanjut.`;
 
   const mainBtn = task && <button className={`btn ${task.done ? 'btn-gold' : 'btn-primary'}`} onClick={task.onClick}>{task.icon && <i className={`bi bi-${task.icon}`} />}{task.cta}</button>;
   // batal hanya selama PSU belum memproses; pengajuan batal / ditutup PSU bisa diajukan ulang dengan data lama
@@ -137,9 +140,9 @@ export default function PengajuanDetail() {
         </div>
       </div>
     ),
-  } : info ? { title: 'Status', body: <div className="task-box info"><span className="ic"><i className="bi bi-hourglass-split" /></span><span className="small">{info}</span></div> } : null;
+  } : info ? { title: 'Status', body: <div className="task-box info"><span className="ic"><i className={`bi bi-${app.certificate?.can_download === false ? 'x-octagon' : 'hourglass-split'}`} /></span><span className="small">{info}</span></div> } : null;
 
-  const survey = app.status === 'selesai' && app.certificate && !app.survey_done
+  const survey = app.status === 'selesai' && app.certificate && !app.survey_done && app.certificate.can_download !== false
     ? <Survey app={app} onDone={(d) => { setApp(d.app); setThanks(d.thank_you_text); window.scrollTo({ top: 0, behavior: 'smooth' }); }} /> : null;
 
   const findingActions = active ? (f) => {

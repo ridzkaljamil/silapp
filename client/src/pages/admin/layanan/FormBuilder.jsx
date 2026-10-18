@@ -45,9 +45,10 @@ export default function FormBuilder() {
   );
   return (
     <>
-      <PageHead eyebrow="Pengaturan" title="Form Pengajuan" sub="Atur isian tambahan dan berkas yang diminta saat pelanggan mengajukan layanan. Geser ikon titik di kiri untuk mengubah urutan. Perubahan hanya berlaku untuk pengajuan baru.">
-        <Select className="form-select" style={{ maxWidth: 240 }} aria-label="Pilih Layanan" value={code} onChange={(e) => setCode(e.target.value)}>{SVC.map(([k, v]) => <option key={k} value={k}>{v}</option>)}</Select>
-      </PageHead>
+      <PageHead eyebrow="Pengaturan" title="Form Pengajuan" sub="Atur isian tambahan dan berkas yang diminta saat pelanggan mengajukan layanan. Geser ikon titik di kiri untuk mengubah urutan. Perubahan hanya berlaku untuk pengajuan baru." />
+      <div className="tabs page-tabs sub-tabs" role="tablist" aria-label="Layanan">
+        {SVC.map(([k, l]) => <button key={k} type="button" role="tab" aria-selected={code === k} onClick={() => setCode(k)}>{l}</button>)}
+      </div>
       {!d ? <Loading /> : (
         <div className="row g-3">
           <div className="col-lg-7">

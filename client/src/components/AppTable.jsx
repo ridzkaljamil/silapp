@@ -1,6 +1,9 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { StatusPill, Progress, fmtDate } from './ui';
 
+/** Penanda tahap melewati target SLA (hanya dikirim server untuk Admin, saat pengajuan ditangani PSU). */
+export const SlaLate = ({ sla }) => (sla?.late ? <span className="sla-late" title={`Target ${sla.days} hari, sudah ${sla.elapsed} hari di tahap ini`}><i className="bi bi-alarm" aria-hidden="true" />Lewat SLA {sla.over} hari</span> : null);
+
 /**
  * Daftar pengajuan: tabel di desktop, kartu di HP.
  * base: '/klien/pengajuan' atau '/admin/pengajuan'
@@ -21,7 +24,7 @@ export default function AppTable({ rows, base, showCompany, empty = 'Tidak ada p
                 {showCompany && <td>{a.company_name}</td>}
                 <td className="small"><span className="text-muted2">{a.status === 'selesai' ? '' : `${a.current_step.code} · `}</span>{stepText(a)}</td>
                 <td><Progress value={a.progress} /></td>
-                <td><StatusPill value={a.condition} /></td>
+                <td><StatusPill value={a.condition} /><div><SlaLate sla={a.sla} /></div></td>
                 <td className="small text-nowrap">{fmtDate(a.created_at)}</td>
               </tr>
             ))}
@@ -37,6 +40,7 @@ export default function AppTable({ rows, base, showCompany, empty = 'Tidak ada p
             </div>
             <div className="d-flex align-items-center gap-2 small"><span className={`pbar flex-grow-1 ${a.progress === 100 ? 'ok' : ''}`}><i style={{ width: `${a.progress}%` }} /></span>{a.progress}%</div>
             <div className="small text-muted2">{a.status === 'selesai' ? 'Selesai' : <>Tahap {a.current_step.index}/{a.current_step.total} · {a.current_step.name}</>}</div>
+            <SlaLate sla={a.sla} />
           </Link>
         ))}
       </div>

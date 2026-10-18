@@ -28,7 +28,8 @@ export default function AdminDetail() {
   const [app, setApp] = useState(null);
   const [err, setErr] = useState('');
   const [mode, setMode] = useState(null);
-  const [f, setF] = useState({ note: '', internal: false, certificate_no: '', doc_name: '' });
+  const blank = () => ({ note: '', internal: false, certificate_no: '', doc_name: '', issued_at: todayYmd(), expires_at: '' });
+  const [f, setF] = useState(blank);
   const [certFile, setCertFile] = useState(null);
   const [files, setFiles] = useState([]);
   const [busy, setBusy] = useState(false);
@@ -63,11 +64,14 @@ export default function AdminDetail() {
 
   // 409 = tahap sudah diubah pengguna lain: tutup pop-up dan muat ulang data terbaru
   const fail = (e) => { toast(errMsg(e), 'danger'); if (e?.response?.status === 409) { setMode(null); setInvOpen(false); load(); } };
-  const reset = () => { setF({ note: '', internal: false, certificate_no: '', doc_name: '' }); setCertFile(null); setFiles([]); };
+  const reset = () => { setF(blank()); setCertFile(null); setFiles([]); };
+  // sertifikat Sertifikasi Produk punya masa berlaku; LHU & sertifikat kalibrasi tidak
+  const needExpiry = st.is_certificate_step && app.service_code === 'SP';
   const act = async () => {
     const action = mode;
     if ((action === 'minta_tindakan' || action === 'tolak') && !f.note.trim()) return toast(action === 'tolak' ? 'Isi alasan penolakan dulu.' : 'Isi tindakan yang diminta dulu.', 'danger');
     if (action === 'abaikan' && !f.note.trim() && !files.length) return toast('Isi catatan atau pilih lampiran.', 'danger');
+    if (action === 'setujui' && needExpiry && !f.expires_at) return toast('Isi tanggal berakhir sertifikat dulu.', 'danger');
     // Setujui: pop-up ini sendiri sudah berupa konfirmasi; aksi lain ditanyakan sekali lagi
     const ask = {
       minta_tindakan: { title: 'Kirim Permintaan Tindakan?', body: 'Status berubah menjadi Action Required dan pelanggan menerima email berisi catatan ini.', ok: 'Ya, Kirim', icon: 'send' },
@@ -79,6 +83,7 @@ export default function AdminDetail() {
     fd.append('action', action); fd.append('step', st.order); fd.append('note', f.note); fd.append('internal', f.internal ? '1' : '0'); fd.append('doc_name', f.doc_name);
     if (f.certificate_no) fd.append('certificate_no', f.certificate_no);
     if (certFile) fd.append('certificate', certFile);
+    if (st.is_certificate_step) { fd.append('issued_at', f.issued_at); if (needExpiry) fd.append('expires_at', f.expires_at); }
     [...files].forEach((x) => fd.append('attachments', x));
     setBusy(true);
     try {
@@ -213,6 +218,8 @@ export default function AdminDetail() {
             <div className="row g-3">
               <div className="col-md-6"><label className="form-label" htmlFor="cn">Nomor {dw}</label><input id="cn" className="form-control" maxLength={60} value={f.certificate_no} onChange={(e) => setF({ ...f, certificate_no: e.target.value })} placeholder={app.service_code === 'SP' ? 'PSU-SPPT-2026-00125' : app.service_code === 'KAL' ? 'KAL/PSU/2026/00125' : 'LHU/PSU/2026/00125'} /></div>
               <div className="col-md-6"><label className="form-label" htmlFor="cf">File {dw} resmi (PDF)</label><FileDrop id="cf" accept=".pdf" files={certFile ? [certFile] : []} onChange={(l) => setCertFile(l[0])} label={`Pilih file ${dw}`} hint={`PDF · maks. ${MAX_FILE_MB} MB`} /></div>
+              <div className="col-md-6"><label className="form-label" htmlFor="ci">Tanggal Terbit</label><input id="ci" type="date" className="form-control" max={todayYmd()} value={f.issued_at} onChange={(e) => setF({ ...f, issued_at: e.target.value })} /></div>
+              {needExpiry && <div className="col-md-6"><label className="form-label" htmlFor="ce">Tanggal Berakhir</label><input id="ce" type="date" className="form-control" min={f.issued_at || undefined} value={f.expires_at} onChange={(e) => setF({ ...f, expires_at: e.target.value })} /><div className="form-text">Masa berlaku sertifikat, tampil di Directory.</div></div>}
               <div className="col-12 small text-muted2">Pelanggan wajib mengisi survei kepuasan sebelum dapat mengunduh {dw}.</div>
             </div>
           )}

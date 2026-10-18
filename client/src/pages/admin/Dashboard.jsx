@@ -131,6 +131,48 @@ export default function Dashboard() {
         </div>
       </section>
 
+      {d.sla_late?.length > 0 && (
+        <section className="panel panel-lg mb-4">
+          <div className="panel-h">
+            <h2 className="mb-0 ph-ic"><i className="bi bi-alarm ic-amber" aria-hidden="true" />Melewati Target SLA</h2>
+            <span className="text-muted2 small">Dihitung sejak tahap ditangani PSU (hari kalender)</span>
+          </div>
+          <div className="need-list">
+            {d.sla_late.map((a) => (
+              <div key={a.id} className="need-row2">
+                <span className="pill pill-closed need-pill">Lewat {a.sla.over} hari</span>
+                <Link to={`/admin/pengajuan/${a.id}`} className="need-tx">
+                  <span className="need-co"><b>{a.company_name}</b><span> · {a.product_label.split(' · ')[0]}</span></span>
+                  <span className="need-code"><span className="mono">{a.application_no} · {a.current_step.code}</span> {a.current_step.name} · target {a.sla.days} hari, berjalan {a.sla.elapsed} hari</span>
+                </Link>
+                <Link to={`/admin/pengajuan/${a.id}`} className="btn btn-outline-secondary need-sec">Buka</Link>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {d.cert_expiring?.length > 0 && (
+        <section className="panel panel-lg mb-4">
+          <div className="panel-h">
+            <h2 className="mb-0 ph-ic"><i className="bi bi-patch-exclamation ic-amber" aria-hidden="true" />Sertifikat Akan Berakhir</h2>
+            <Link to="/admin/sertifikat" className="link-arrow">Data Sertifikat<i className="bi bi-arrow-right" aria-hidden="true" /></Link>
+          </div>
+          <div className="need-list">
+            {d.cert_expiring.map((c) => (
+              <div key={`${c.source}-${c.id}`} className="need-row2">
+                <span className={`pill ${c.days_left <= 30 ? 'pill-closed' : 'pill-action'} need-pill`}>{c.days_left === 0 ? 'Berakhir hari ini' : `${c.days_left} hari lagi`}</span>
+                <span className="need-tx">
+                  <span className="need-co"><b>{c.factory_name}</b><span> · {c.source === 'silapp' ? c.application_no : 'Sebelum SILAPP'}</span></span>
+                  <span className="mono need-code">{c.certificate_no} · berlaku s.d. {fmtDate(c.expires_at)}</span>
+                </span>
+                <Link to={c.application_id ? `/admin/pengajuan/${c.application_id}` : '/admin/sertifikat'} className="btn btn-outline-secondary need-sec">{c.application_id ? 'Buka' : 'Lihat'}</Link>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
       <div className="chart-grid">
         <section className="panel panel-lg">
           <div className="panel-h">

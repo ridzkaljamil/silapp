@@ -28,3 +28,11 @@ export const CONDITIONS = [['berjalan', 'Semua yang Berjalan'], ['On Progress', 
   ['Certified', 'Certified'], ['Completed', 'Completed'], ['Closed', 'Closed'], ['Cancelled', 'Cancelled']];
 /** Kondisi cocok dengan filter (dipakai filter di sisi browser). */
 export const matchCondition = (a, c) => !c || (c === 'berjalan' ? ['aktif', 'aksi'].includes(a.status) : a.condition === c);
+
+/**
+ * Status sertifikat Sertifikasi Produk: [kelas pill, teks].
+ * Aktif, Ditangguhkan, Dicabut diatur Admin; Berakhir tampil otomatis bila tanggal berakhir sudah lewat.
+ */
+export const CERT_STATE = { aktif: ['pill-done', 'Aktif'], ditangguhkan: ['pill-action', 'Ditangguhkan'], dicabut: ['pill-closed', 'Dicabut'], berakhir: ['pill-neutral', 'Berakhir'] };
+/** Status yang bisa dipilih Admin. */
+export const CERT_STATUS = [['aktif', 'Aktif'], ['ditangguhkan', 'Ditangguhkan'], ['dicabut', 'Dicabut']];

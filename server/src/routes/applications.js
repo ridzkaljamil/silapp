@@ -4,7 +4,8 @@ const path = require('path');
 const crypto = require('crypto');
 const { q, one } = require('../config/db');
 const { requireAuth, allow } = require('../middleware/auth');
-const { upload, UPLOAD_DIR } = require('../utils/upload');
+const { upload } = require('../utils/upload');
+const storage = require('../utils/storage');
 const wf = require('../services/workflow');
 const { detail } = require('../services/present');
 const { listApps } = require('../services/listing');
@@ -28,7 +29,7 @@ async function ownApp(req) {
 }
 
 router.get('/', async (req, res, next) => {
-  try { res.json(await listApps('a.user_id=?', [req.user.id])); } catch (e) { next(e); }
+  try { res.json((await listApps('a.user_id=?', [req.user.id])).map(({ sla, ...r }) => r)); } catch (e) { next(e); }
 });
 
 router.get('/:id', async (req, res, next) => {
@@ -325,7 +326,7 @@ router.get('/:id/documents/:docId', async (req, res, next) => {
     const app = await ownApp(req);
     const doc = await one('SELECT * FROM documents WHERE id=? AND application_id=? AND customer_visible=1', [req.params.docId, app.id]);
     if (!doc) return res.status(404).json({ message: 'Dokumen tidak ditemukan.' });
-    res.download(path.join(UPLOAD_DIR, doc.file_path), doc.original_name);
+    await storage.send(res, doc.file_path, doc.original_name);
   } catch (e) { next(e); }
 });
 
@@ -342,7 +343,7 @@ router.get('/:id/payment-proof', async (req, res, next) => {
     const app = await ownApp(req);
     const pay = await one('SELECT proof_path FROM payments WHERE application_id=? AND proof_path IS NOT NULL ORDER BY id DESC LIMIT 1', [app.id]);
     if (!pay) return res.status(404).json({ message: 'Bukti bayar belum ada.' });
-    res.download(path.join(UPLOAD_DIR, pay.proof_path), `bukti-bayar-${app.application_no}${path.extname(pay.proof_path)}`);
+    await storage.send(res, pay.proof_path, `bukti-bayar-${app.application_no}${path.extname(pay.proof_path)}`);
   } catch (e) { next(e); }
 });
 
@@ -399,8 +400,10 @@ router.get('/:id/certificate', async (req, res, next) => {
     const app = await ownApp(req);
     const cert = await one('SELECT * FROM certificates WHERE application_id=?', [app.id]);
     if (!cert || !cert.file_path || app.status !== 'selesai') return res.status(404).json({ message: 'File sertifikat belum tersedia.' });
+    // sertifikat yang dicabut tidak berlaku lagi: file tidak bisa diunduh pelanggan (Admin tetap bisa melihat arsipnya)
+    if (cert.status === 'dicabut') return res.status(403).json({ code: 'CERT_REVOKED', message: 'Sertifikat ini telah dicabut dan tidak berlaku lagi, sehingga tidak dapat diunduh. Hubungi PSU untuk informasi lebih lanjut.' });
     if (!(await one('SELECT id FROM survey_responses WHERE application_id=?', [app.id]))) return res.status(403).json({ message: 'Isi survei kepuasan pelanggan terlebih dahulu.' });
-    res.download(path.join(UPLOAD_DIR, cert.file_path), `${cert.certificate_no.replace(/[\/\\]/g, '-')}.pdf`);
+    await storage.send(res, cert.file_path, `${cert.certificate_no.replace(/[\/\\]/g, '-')}.pdf`);
   } catch (e) { next(e); }
 });
 

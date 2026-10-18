@@ -7,7 +7,7 @@ import { Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from './AuthContext';
 import { PublicLayout, AppLayout, BareLayout, MinimalLayout } from './components/Layouts';
 import Lacak from './pages/public/Lacak';
-import { Login, GantiSandi } from './pages/public/Auth';
+import { Login, GantiSandi, LupaSandi, ResetSandi } from './pages/public/Auth';
 
 const Layanan = lazy(() => import('./pages/public/Layanan'));
 const Directory = lazy(() => import('./pages/public/Directory'));
@@ -25,13 +25,14 @@ const AkunPelanggan = lazy(() => import('./pages/admin/AkunPelanggan'));
 const DataSertifikat = lazy(() => import('./pages/admin/DataSertifikat'));
 const Pengguna = lazy(() => import('./pages/admin/Pengguna'));
 const Survei = lazy(() => import('./pages/admin/Survei'));
+const LogEmail = lazy(() => import('./pages/admin/LogEmail'));
 const KelolaLayanan = lazy(() => import('./pages/admin/layanan/KelolaLayanan'));
 const TemplateDokumen = lazy(() => import('./pages/common/TemplateDokumen'));
 
-/** Directory di area admin: tombol Kelola untuk Super Admin dan Admin bidang SP. */
+/** Directory di area admin: tombol kembali ke Data Sertifikat untuk Super Admin dan Admin bidang SP. */
 function AdminDirectory() {
   const { user } = useAuth();
-  return <Directory inApp manageTo={user.role === 'superadmin' || user.bidang === 'SP' ? '/admin/sertifikat' : undefined} />;
+  return <Directory inApp backTo={user.role === 'superadmin' || user.bidang === 'SP' ? '/admin/sertifikat' : undefined} />;
 }
 
 export default function App() {
@@ -46,6 +47,8 @@ export default function App() {
       </Route>
       <Route element={<MinimalLayout />}>
         <Route path="ganti-sandi" element={<GantiSandi />} />
+        <Route path="lupa-sandi" element={<LupaSandi />} />
+        <Route path="reset-sandi" element={<ResetSandi />} />
       </Route>
       <Route path="klien" element={<AppLayout roles={['user']} />}>
         <Route index element={<Beranda />} />
@@ -73,6 +76,7 @@ export default function App() {
         <Route path="pengguna" element={<Pengguna />} />
         <Route path="layanan" element={<KelolaLayanan />} />
         <Route path="survei" element={<Survei />} />
+        <Route path="email" element={<LogEmail />} />
       </Route>
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

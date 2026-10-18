@@ -11,8 +11,11 @@ Layanan yang didukung: Sertifikasi Produk (LSPro, termasuk alur khusus skema Tip
 - **Publik:** lacak status pengajuan dengan kode lacak (tanpa login) dan informasi layanan beserta ruang lingkupnya.
 - **Pelanggan:** mengajukan layanan, mengunduh template dokumen berkop PSU, membatalkan pengajuan yang belum diproses lalu mengajukan ulang (juga untuk pengajuan yang ditutup PSU), mengunggah dokumen dan bukti bayar, mengunduh proforma invoice PDF, membalas permintaan tindakan, mengirim bukti perbaikan temuan (koreksi, akar penyebab, tindakan korektif) dan mengajukan perpanjangan, mengunduh sertifikat/LHU, mengisi survei kepuasan, dan melihat Directory sertifikat.
 - **Admin:** antrean pengajuan per bidang, persetujuan tiap tahap, proforma invoice, verifikasi pembayaran, riwayat per tahap, temuan audit, parameter uji lab, akun pelanggan, dan dashboard.
-- **Super Admin:** semua fitur Admin, ditambah pengguna internal, Kelola Layanan (detail & tahapan, form pengajuan, ruang lingkup & harga, identitas invoice dan kontak), template dokumen, survei, serta data sertifikat. Rekap survei kepuasan per layanan bisa diberi catatan tindak lanjut dan diekspor ke Excel/CSV.
-- Notifikasi di aplikasi dan lewat email, konfirmasi sebelum setiap aksi penting, indikator "Sedang memproses…", pengaturan akun dengan foto profil, dan tampilan responsif untuk HP.
+- **Super Admin:** semua fitur Admin, ditambah pengguna internal, Kelola Layanan (detail & tahapan beserta target SLA, form pengajuan, ruang lingkup & harga, identitas invoice dan kontak), template dokumen, survei, data sertifikat, dan Log Email. Rekap survei kepuasan per layanan bisa diberi catatan tindak lanjut dan diekspor ke Excel/CSV.
+- **Data sertifikat:** status Aktif/Ditangguhkan/Dicabut (Berakhir otomatis setelah lewat tanggal), alasan wajib saat ditangguhkan atau dicabut, riwayat perubahan, dan pilihan tampil di Directory. Sertifikat yang dicabut tidak bisa diunduh pelanggan.
+- **Pengingat otomatis:** sertifikat akan berakhir (90 & 30 hari), proforma invoice jatuh tempo, dan batas waktu temuan. Pengajuan yang melewati target SLA tahap ditandai di Antrean dan Dashboard.
+- **Akun:** lupa kata sandi lewat email, sesi di perangkat lain otomatis keluar setelah kata sandi diganti, peringatan bila NIB/NPWP pelanggan sudah dipakai akun lain.
+- Notifikasi di aplikasi dan lewat email (dengan antrean & kirim ulang otomatis), konfirmasi sebelum setiap aksi penting, indikator "Sedang memproses…", pengaturan akun dengan foto profil, dan tampilan responsif untuk HP.
 
 ## Teknologi
 
@@ -22,13 +25,13 @@ Layanan yang didukung: Sertifikasi Produk (LSPro, termasuk alur khusus skema Tip
 
 ## Instalasi
 
-Yang perlu disiapkan: Node.js 18 atau lebih baru dan MySQL (misalnya lewat XAMPP).
+Yang perlu disiapkan: Node.js 20 atau lebih baru dan MySQL/MariaDB (misalnya lewat XAMPP).
 
 1. Nyalakan MySQL, lalu buat database:
    ```sql
    CREATE DATABASE silapp CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
    ```
-2. Salin `server/.env.example` menjadi `server/.env`, lalu sesuaikan isinya:
+2. Salin `server/env.example` menjadi `server/.env`, lalu sesuaikan isinya (penjelasan setiap isian ada di file itu):
    ```
    DB_USER=root
    DB_PASS=
@@ -62,7 +65,30 @@ Contoh kode lacak: `SLP26-X2KD4M7A`, `SLP26-C7WD2KPM`, `SLP26-9RTE3LQW`.
 
 Isi `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, dan `SMTP_PASS` di `server/.env`. Jika `SMTP_HOST` dikosongkan, email tidak dikirim dan isinya hanya ditampilkan di console server.
 
+Setiap email dicatat di menu **Log Email** (Super Admin). Email yang gagal karena server email sibuk dicoba ulang otomatis hingga 5 kali dalam 3 hari, dan bisa dikirim ulang manual dari menu itu.
+
 Contoh memakai Gmail: `SMTP_HOST=smtp.gmail.com`, `SMTP_PORT=465`, `SMTP_USER=alamat@gmail.com`, dan `SMTP_PASS` diisi **App Password** (Akun Google → Keamanan → Verifikasi 2 Langkah → Sandi Aplikasi), bukan kata sandi Gmail biasa.
+
+## Tugas terjadwal
+
+Pengingat (sertifikat akan berakhir, proforma invoice jatuh tempo, batas waktu temuan) dan kirim ulang email gagal dijalankan oleh satu perintah:
+
+```bash
+npm run jobs
+```
+
+- Selama server menyala, tugas ini berjalan sendiri setiap 30 menit (atur dengan `JOBS_INTERVAL_MIN`, `0` untuk mematikan). Bagian harian hanya jalan sekali per hari dan pengingat yang sama tidak terkirim dua kali.
+- cPanel: pasang juga di **Cron Jobs** sekali sehari, karena aplikasi Node di cPanel bisa "tidur" saat sepi (lihat [DEPLOY-CPANEL.md](DEPLOY-CPANEL.md)).
+- Vercel: sudah diatur di `vercel.json` (setiap hari pukul 07.00 WIB) lewat alamat `/api/cron` yang dilindungi `CRON_SECRET`.
+
+## Pengujian
+
+```bash
+npm test                 # semua pengujian API
+npm test -- sertifikat   # hanya file uji yang namanya mengandung "sertifikat"
+```
+
+Pengujian memakai database terpisah `<DB_NAME>_test` (dibuat otomatis bila user MySQL boleh membuat database) dan folder sementara untuk file, sehingga data dan berkas asli tidak tersentuh. Email dan Vercel Blob dimatikan selama pengujian. File uji ada di `server/tests/`.
 
 ## Build dan deploy
 
@@ -74,6 +100,8 @@ npm start       # Express menyajikan API dan client di satu port
 
 Folder `server/uploads/` menyimpan dokumen unggahan, jadi pastikan folder itu dapat ditulis dan ikut dibackup.
 
+Panduan lengkap: [DEPLOY-CPANEL.md](DEPLOY-CPANEL.md) untuk hosting cPanel (Jagoan Hosting) dan [DEPLOY-VERCEL.md](DEPLOY-VERCEL.md) untuk Vercel. Keduanya memakai kode yang sama dari repo ini.
+
 Sebelum dipakai di server resmi:
 
 - **Jangan jalankan `npm run db:reset`** di server resmi. Perintah itu membuat data contoh dan akun dengan kata sandi `password123`.
@@ -84,16 +112,26 @@ Sebelum dipakai di server resmi:
 
 ```
 silapp/
+├─ api/               pintu masuk fungsi Vercel
 ├─ client/            frontend React
 │  └─ src/
 │     ├─ components/  komponen bersama
-│     ├─ pages/       halaman public, client, admin (layanan/ = Kelola Layanan), common
+│     ├─ pages/       halaman public, client (ajukan/ = langkah Ajukan Layanan), admin (layanan/ = Kelola Layanan), common
 │     ├─ hooks/  lib/
 │     └─ styles/
-└─ server/            backend Express
-   ├─ database/       schema.sql, seed, data ruang lingkup & harga, template Word
-   ├─ uploads/        berkas unggahan (tidak ikut git)
-   └─ src/            config, middleware, routes, services
+├─ scripts/           pack-cpanel.js (paket ZIP untuk cPanel)
+├─ server/            backend Express
+│  ├─ database/       schema.sql, seed, silapp-init.sql, data ruang lingkup & harga, template Word
+│  ├─ src/
+│  │  ├─ config/      koneksi & migrasi database, Super Admin pertama
+│  │  ├─ jobs/        tugas terjadwal (pengingat, kirim ulang email)
+│  │  ├─ routes/      endpoint API (superadmin/ per menu)
+│  │  ├─ services/    logika bisnis (workflow/ per bagian alur)
+│  │  └─ utils/       penyimpanan file, email, sertifikat, harga
+│  ├─ tests/          pengujian otomatis (npm test)
+│  ├─ uploads/        berkas unggahan (tidak ikut git)
+│  └─ env.example     contoh pengaturan .env
+└─ vercel.json        pengaturan hosting Vercel
 ```
 
 ## Pengembang

@@ -2,28 +2,35 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import api from '../../api';
 import { Loading, PageHead, fmtDate, CountUp } from '../../components/ui';
+import { CERT_STATE } from '../../lib/constants';
 
-const Status = ({ v }) => <span className={`pill ${v === 'aktif' ? 'pill-done' : 'pill-closed'}`}>{v === 'aktif' ? 'Aktif' : 'Tidak aktif'}</span>;
+const Status = ({ v }) => { const [cls, label] = CERT_STATE[v] || CERT_STATE.aktif; return <span className={`pill ${cls}`}>{label}</span>; };
+const FILTERS = [['', 'Semua'], ...Object.entries(CERT_STATE).map(([k, [, l]]) => [k, l])];
 
-/** Directory publik: perusahaan bersertifikat Sertifikasi Produk (SILAPP + proyek sebelum SILAPP). */
-export default function Directory({ inApp = false, manageTo }) {
+/**
+ * Directory publik: perusahaan bersertifikat Sertifikasi Produk (SILAPP + proyek sebelum SILAPP).
+ * backTo: di area admin, tombol kembali ke halaman Data Sertifikat.
+ */
+export default function Directory({ inApp = false, backTo }) {
   const [rows, setRows] = useState(null);
   const [q, setQ] = useState('');
   const [st, setSt] = useState('');
   useEffect(() => { api.get('/public/directory').then((r) => setRows(r.data)); }, []);
   if (!rows) return <Loading />;
-  const f = rows.filter((r) => (!st || r.status === st) && `${r.certificate_no} ${r.factory_name} ${r.product} ${r.sni_no} ${r.factory_address}`.toLowerCase().includes(q.toLowerCase()));
+  const f = rows.filter((r) => (!st || r.state === st) && `${r.certificate_no} ${r.factory_name} ${r.product} ${r.sni_no} ${r.factory_address}`.toLowerCase().includes(q.toLowerCase()));
   const stats = (<>
-    <div><div className="big-amount"><CountUp value={rows.filter((r) => r.status === 'aktif').length} /></div><div className="small text-muted2">aktif</div></div>
+    <div><div className="big-amount"><CountUp value={rows.filter((r) => r.state === 'aktif').length} /></div><div className="small text-muted2">aktif</div></div>
     <div><div className="big-amount"><CountUp value={rows.length} /></div><div className="small text-muted2">total data</div></div>
   </>);
   return (
     <div className="d-flex flex-column gap-4">
       {inApp ? (
-        <PageHead eyebrow="Publik" title="Directory Sertifikat" sub="Daftar perusahaan pemegang SPPT SNI dari LSPro PSU. Status Aktif atau Tidak Aktif menunjukkan masa berlaku sertifikat.">
-          <div className="d-flex gap-4 me-2">{stats}</div>
-          {manageTo && <Link to={manageTo} className="btn btn-outline-secondary"><i className="bi bi-pencil-square" />Kelola Data</Link>}
-        </PageHead>
+        <div>
+          {backTo && <Link to={backTo} className="back-link mb-2"><i className="bi bi-arrow-left" />Kembali ke Data Sertifikat</Link>}
+          <PageHead eyebrow="Publik" title="Directory Sertifikat" sub="Daftar perusahaan pemegang SPPT SNI dari LSPro PSU beserta status dan masa berlaku sertifikatnya.">
+            <div className="d-flex gap-4 me-2">{stats}</div>
+          </PageHead>
+        </div>
       ) : (
         <div className="d-flex justify-content-between align-items-end flex-wrap gap-3">
           <div style={{ maxWidth: 640 }}>
@@ -40,17 +47,17 @@ export default function Directory({ inApp = false, manageTo }) {
           <input className="border-0 flex-grow-1 bg-transparent" style={{ outline: 0, minHeight: 44 }} placeholder="Cari nama pabrik, produk, nomor SNI atau sertifikat" aria-label="Cari" value={q} onChange={(e) => setQ(e.target.value)} />
         </label>
         <div className="segmented" role="group" aria-label="Filter Status">
-          {[['', 'Semua'], ['aktif', 'Aktif'], ['tidak_aktif', 'Tidak Aktif']].map(([v, l]) => <button key={v} aria-pressed={st === v} onClick={() => setSt(v)}>{l}</button>)}
+          {FILTERS.map(([v, l]) => <button key={v} aria-pressed={st === v} onClick={() => setSt(v)}>{l}</button>)}
         </div>
       </div>
 
       <section className="panel overflow-hidden">
         <div className="app-table table-responsive">
           <table className="table align-middle">
-            <thead><tr><th>Nama Pabrik</th><th>Produk</th><th>Nomor SNI</th><th>Nomor Sertifikat</th><th>Terbit</th><th>Status</th></tr></thead>
+            <thead><tr><th>Nama Pabrik</th><th>Produk</th><th>Nomor SNI</th><th>Nomor Sertifikat</th><th>Terbit</th><th>Berlaku s.d.</th><th>Status</th></tr></thead>
             <tbody>
               {f.map((r) => (
-                <tr key={r.certificate_no}><td><b>{r.factory_name}</b><div className="small text-muted2">{r.factory_address}</div></td><td>{r.product}</td><td className="mono">{r.sni_no}</td><td className="mono">{r.certificate_no}</td><td className="text-nowrap">{fmtDate(r.issued_at)}</td><td><Status v={r.status} /></td></tr>
+                <tr key={r.certificate_no}><td><b>{r.factory_name}</b><div className="small text-muted2">{r.factory_address}</div></td><td>{r.product}</td><td className="mono">{r.sni_no}</td><td className="mono">{r.certificate_no}</td><td className="text-nowrap">{fmtDate(r.issued_at)}</td><td className="text-nowrap">{fmtDate(r.expires_at)}</td><td><Status v={r.state} /></td></tr>
               ))}
             </tbody>
           </table>
@@ -58,10 +65,10 @@ export default function Directory({ inApp = false, manageTo }) {
         <div className="app-cards">
           {f.map((r) => (
             <div key={r.certificate_no} className="app-card">
-              <div className="d-flex justify-content-between gap-2"><b>{r.factory_name}</b><Status v={r.status} /></div>
+              <div className="d-flex justify-content-between gap-2"><b>{r.factory_name}</b><Status v={r.state} /></div>
               <div className="small text-muted2">{r.factory_address}</div>
               <div className="small">{r.product} · <span className="mono">{r.sni_no}</span></div>
-              <div className="small text-muted2"><span className="mono">{r.certificate_no}</span> · terbit {fmtDate(r.issued_at)}</div>
+              <div className="small text-muted2"><span className="mono">{r.certificate_no}</span> · terbit {fmtDate(r.issued_at)} · berlaku s.d. {fmtDate(r.expires_at)}</div>
             </div>
           ))}
         </div>

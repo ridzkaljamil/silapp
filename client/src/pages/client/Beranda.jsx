@@ -8,7 +8,7 @@ import { Loading, rupiah, fmtDate, useConfirm } from '../../components/ui';
 import AppTable from '../../components/AppTable';
 import { docWord } from '../../lib/constants';
 import { useContact, waLink } from '../../lib/contact';
-import { DraftCard } from './Ajukan';
+import DraftCard from './ajukan/DraftCard';
 
 const dayDiff = (d) => (d ? Math.round((new Date(`${d}T00:00:00`) - new Date(new Date().toDateString())) / 86400000) : null);
 

@@ -1,11 +1,11 @@
 const router = require('express').Router();
-const path = require('path');
-const { UPLOAD_DIR } = require('../utils/upload');
+const storage = require('../utils/storage');
 const { SILAPP_SQL } = require('./certificates');
 const { q, one } = require('../config/db');
 const { loadApp } = require('../services/workflow');
 const { detail } = require('../services/present');
 const { getContact } = require('../utils/settings');
+const { certState, todayJkt } = require('../utils/certificate');
 
 /** Kontak umum PSU (WhatsApp & email) untuk halaman publik dan bantuan. */
 router.get('/contact', async (req, res, next) => {
@@ -75,23 +75,26 @@ router.get('/services/:code/form', async (req, res, next) => {
 
 /**
  * Directory publik: perusahaan bersertifikat Sertifikasi Produk
- * (terbit lewat SILAPP + proyek sebelum SILAPP). Status Aktif & Tidak Aktif ditampilkan.
+ * (terbit lewat SILAPP + proyek sebelum SILAPP) dengan statusnya: Aktif, Ditangguhkan, Dicabut, atau Berakhir (masa berlaku lewat).
  */
 router.get('/directory', async (req, res, next) => {
   try {
     const silapp = await q(`${SILAPP_SQL} AND c.show_in_directory=1`);
-    const legacy = await q('SELECT certificate_no, issued_at, status, factory_name, factory_address, product, sni_no FROM legacy_certificates');
-    const pick = ({ certificate_no, issued_at, status, factory_name, factory_address, product, sni_no }) => ({ certificate_no, issued_at, status, factory_name, factory_address, product, sni_no });
+    const legacy = await q('SELECT certificate_no, issued_at, expires_at, status, factory_name, factory_address, product, sni_no FROM legacy_certificates WHERE show_in_directory=1');
+    const today = todayJkt();
+    const pick = ({ certificate_no, issued_at, expires_at, status, factory_name, factory_address, product, sni_no }) => ({
+      certificate_no, issued_at, expires_at, state: certState({ status, expires_at }, today), factory_name, factory_address, product, sni_no });
     res.json([...silapp, ...legacy].map(pick).sort((a, b) => String(b.issued_at).localeCompare(String(a.issued_at))));
   } catch (e) { next(e); }
 });
 
-/** Foto profil pengguna (nama file acak, hanya pola avatar-*). */
-router.get('/avatar/:file', (req, res) => {
-  const f = req.params.file;
-  if (!/^avatar-\d+-[a-f0-9]+\.(png|jpe?g)$/.test(f)) return res.status(404).end();
-  res.set('Cache-Control', 'public, max-age=86400');
-  res.sendFile(path.join(UPLOAD_DIR, f), (err) => err && !res.headersSent && res.status(404).end());
+/** Foto profil pengguna (berdasarkan id; file disimpan dengan nama acak). */
+router.get('/avatar/:id', async (req, res, next) => {
+  try {
+    const u = await one('SELECT avatar FROM users WHERE id=?', [+req.params.id || 0]);
+    if (!u?.avatar || !/\.(png|jpe?g)$/i.test(u.avatar) || req.query.v !== storage.version(u.avatar)) return res.status(404).end();
+    await storage.send(res, u.avatar, null, { inline: true, cache: 'public, max-age=86400' });
+  } catch (e) { next(e); }
 });
 
 module.exports = router;

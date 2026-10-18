@@ -6,6 +6,7 @@
 const { q, one } = require('../config/db');
 const { stepOf, condition, isSkipped, allDocsDownloaded } = require('./workflow');
 const { optionLabel, taxes } = require('../utils/pricing');
+const { certState } = require('../utils/certificate');
 
 const UNIT = { SP: 'LSPro PSU', KAL: 'Laboratorium Kalibrasi PSU' };
 const unitOf = (code) => UNIT[code] || 'Laboratorium Pengujian PSU';
@@ -14,12 +15,32 @@ function progress(app) {
   return app.status === 'selesai' ? 100 : stepOf(app).progress_pct;
 }
 
+/** Kondisi ketika bola ada di PSU (bukan menunggu pelanggan): dihitung terhadap target SLA tahap. */
+const PSU_TURN = ['On Progress', 'Scheduling', 'On-Site Calibration'];
+const DAY = 86400000;
+/** Tanggal kalender WIB (YYYY-MM-DD). Waktu dari database sudah berupa teks WIB (dateStrings + time_zone +07:00). */
+const ymdJkt = (d) => (typeof d === 'string' ? d.slice(0, 10) : new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Jakarta' }).format(d));
+
+/**
+ * SLA tahap berjalan: { days, elapsed, late, over } dalam hari kalender sejak tahap ditangani PSU.
+ * null bila tahap tidak punya target SLA, pengajuan sudah ditutup, atau sedang menunggu pelanggan.
+ */
+function slaOf(app, st, cond) {
+  if (st.sla_days == null || !app.step_since || app.status !== 'aktif') return null;
+  const psu = PSU_TURN.includes(cond) || (cond === 'Waiting for Payment' && app.payment_status === 'menunggu');
+  if (!psu) return null;
+  const elapsed = Math.round((new Date(`${ymdJkt(new Date())}T00:00:00Z`) - new Date(`${ymdJkt(app.step_since)}T00:00:00Z`)) / DAY);
+  const days = +st.sla_days;
+  return { days, elapsed, late: elapsed > days, over: Math.max(0, elapsed - days) };
+}
+
 function summary(app) {
   const st = stepOf(app);
+  const cond = condition(app);
   return {
     id: app.id, application_no: app.application_no, tracking_code: app.tracking_code,
     service_code: app.service_code, service_name: app.service_name, product_label: app.product_label,
-    company_name: app.company_name, status: app.status, condition: condition(app),
+    company_name: app.company_name, status: app.status, condition: cond, sla: slaOf(app, st, cond),
     current_step: { order: app.current_step_order, code: st.status_code, name: st.name, index: app.steps.findIndex((x) => x.step_order === app.current_step_order) + 1, total: app.steps.length, is_payment_step: !!st.is_payment_step },
     progress: progress(app),
     payment_status: app.payment_status, open_findings: +app.open_findings || 0, is_package: !!app.is_package, flow: app.flow || '',
@@ -54,6 +75,7 @@ async function detail(app, viewer) {
     one('SELECT created_at FROM status_logs WHERE application_id=? AND customer_visible=1 ORDER BY id DESC LIMIT 1', [app.id]),
   ]);
   const base = { ...summary(app), steps };
+  if (!admin) delete base.sla; // target SLA hanya untuk internal PSU
   base.last_update = lastLog ? lastLog.created_at : app.created_at;
   base.customer_action_needed = app.status === 'aksi' || +app.open_findings > 0 || (stepOf(app).is_payment_step && app.payment_status === 'invoice' && app.status === 'aktif');
   base.service_est = app.service_est || null;
@@ -76,7 +98,7 @@ async function detail(app, viewer) {
     q('SELECT * FROM samples WHERE application_id=?', [app.id]),
     one('SELECT * FROM payments WHERE application_id=? ORDER BY id DESC LIMIT 1', [app.id]),
     q('SELECT * FROM findings WHERE application_id=? ORDER BY FIELD(category,"mayor","minor","observasi"), id', [app.id]),
-    one('SELECT certificate_no, issued_at, status, file_path IS NOT NULL has_file FROM certificates WHERE application_id=?', [app.id]),
+    one('SELECT id, certificate_no, issued_at, expires_at, status, file_path IS NOT NULL has_file FROM certificates WHERE application_id=?', [app.id]),
     one('SELECT id, respondent_name, reference_no, avg_score, suggestion, contact_ok, contact_info, created_at FROM survey_responses WHERE application_id=?', [app.id]),
   ]);
   base.documents = docs.map((d) => ({ ...d, customer_visible: !!d.customer_visible }));
@@ -112,7 +134,12 @@ async function detail(app, viewer) {
     extension_files: base.documents.filter((d) => d.finding_id === f.id && d.doc_type.startsWith('Lampiran Perpanjangan')),
   }));
 
-  base.certificate = cert && { ...cert, has_file: !!cert.has_file };
+  if (cert) {
+    const { id, ...c } = cert;
+    // alasan ditangguhkan/dicabut ikut ditampilkan; pelanggan tidak bisa mengunduh sertifikat yang dicabut
+    const note = c.status !== 'aktif' && viewer !== 'public' ? await require('./certificates').statusNote('silapp', id) : null;
+    base.certificate = { ...c, has_file: !!c.has_file, state: certState(c), status_note: note, can_download: c.status !== 'dicabut' || admin };
+  } else base.certificate = null;
   base.survey_done = !!survey;
   if (admin && survey) {
     survey.answers = await q('SELECT question, score FROM survey_answers WHERE response_id=? ORDER BY id', [survey.id]);

@@ -5,6 +5,76 @@ Pengembangan dimulai 29 September 2026 sebagai bagian dari OJT di PT Penilai Sta
 
 Penomoran versi: angka pertama naik untuk rilis yang siap dipakai, angka kedua untuk penambahan fitur, angka ketiga untuk perbaikan dan dokumentasi.
 
+## [2.0.0] – 2026-10-17
+
+Rilis siap dipakai (live). Satu kode untuk komputer (XAMPP), cPanel, dan Vercel; perbedaannya hanya di pengaturan `.env`.
+
+### Ditambahkan
+
+- **Lupa kata sandi mandiri**: tautan "Lupa kata sandi?" di halaman Masuk mengirim tautan pembuatan kata sandi baru ke email (berlaku 30 menit, sekali pakai, disimpan dalam bentuk hash). Permintaan dibatasi agar tidak disalahgunakan, dan jawabannya sama untuk email terdaftar maupun tidak.
+- **Sesi lama otomatis keluar** setelah kata sandi diganti pengguna, direset Admin, diganti Super Admin, atau dibuat ulang lewat email. Perangkat yang mengganti kata sandi tetap masuk; perangkat lain diarahkan ke halaman Masuk dengan keterangan.
+- **Riwayat sertifikat** di Data Sertifikat: terbit, perubahan status, perubahan tanggal, dan tampil/tidak di Directory, lengkap dengan waktu dan petugas.
+- Mengubah status sertifikat menjadi **Ditangguhkan atau Dicabut wajib disertai alasan**. Untuk sertifikat SILAPP, pelanggan menerima notifikasi dan email berisi alasannya; alasan juga tampil di detail pengajuan pelanggan.
+- Pilihan **"Tampilkan di Directory publik"** per sertifikat (SILAPP maupun proyek sebelum SILAPP).
+- **Pengingat otomatis** (tugas terjadwal):
+  - sertifikat akan berakhir 90 dan 30 hari lagi, serta yang baru berakhir — ke pelanggan (email + notifikasi) dan Admin Sertifikasi Produk;
+  - proforma invoice H-1 jatuh tempo dan yang sudah lewat;
+  - batas waktu tindakan perbaikan temuan H-7 dan yang sudah lewat.
+  Pengingat yang sama tidak pernah terkirim dua kali; bila tanggal diperpanjang, pengingat menyesuaikan.
+- **Target SLA per tahap** kini dipakai: pengajuan yang melewati target ditandai "Lewat SLA n hari" di Antrean, detail pengajuan, dan panel baru di Dashboard. Hitungan berjalan hanya saat pengajuan ditangani PSU (berhenti saat menunggu pelanggan) dan tidak terlihat oleh pelanggan.
+- Dashboard: panel **Sertifikat Akan Berakhir** (90 hari ke depan) untuk Super Admin dan Admin Sertifikasi Produk.
+- **Antrean email & Log Email** (menu Super Admin): semua email dicatat, yang gagal dicoba ulang otomatis (maks. 5 kali dalam 3 hari) dan bisa dikirim ulang manual. Isi email dihapus setelah terkirim; email berisi kata sandi atau tautan reset tidak pernah disimpan isinya.
+- Peringatan **data pelanggan ganda**: membuat atau mengubah akun pelanggan dengan NIB/NPWP yang sudah dipakai akun lain meminta konfirmasi dulu (mis. cabang dengan PIC berbeda tetap bisa disimpan terpisah).
+- Pesan jelas saat file terlalu besar ditolak server/hosting (HTTP 413) dan saat koneksi ke server terputus; template dokumen dicek ukurannya sebelum diunggah.
+- **Pengujian otomatis** `npm test`: 195 pemeriksaan API (alur end-to-end, sertifikat, kondisi bersamaan, akun & kata sandi, tugas terjadwal & email, instalasi baru). Memakai database `<DB_NAME>_test` dan folder sementara, sehingga data asli tidak tersentuh.
+- Hosting cPanel (Jagoan Hosting): `npm run pack:cpanel` membuat ZIP siap upload, `server/database/silapp-init.sql` untuk import phpMyAdmin (dibuat ulang dengan `npm run db:sql`), `npm run db:init` untuk data master saja, akun Super Admin pertama dari `SUPERADMIN_EMAIL`/`SUPERADMIN_PASSWORD`, dan panduan `DEPLOY-CPANEL.md`.
+- Hosting Vercel di repo yang sama: `api/index.js`, `vercel.json` (termasuk Vercel Cron harian), penyimpanan file di Vercel Blob bila `BLOB_READ_WRITE_TOKEN` terisi, dan panduan `DEPLOY-VERCEL.md`.
+- Tugas terjadwal bisa dipicu tiga cara: otomatis tiap 30 menit selama server menyala, `npm run jobs` (Cron Jobs cPanel), atau `/api/cron` dengan `CRON_SECRET`.
+- `server/env.example`: satu contoh pengaturan untuk komputer, cPanel, dan Vercel.
+
+### Diubah
+
+- Sertifikat yang **Dicabut tidak bisa diunduh pelanggan** (Admin tetap bisa membuka arsipnya) dan tidak dilampirkan di email. Sertifikat Ditangguhkan dan Berakhir tetap bisa diunduh dengan keterangan statusnya.
+- Ganti kata sandi minimal 8 dan maksimal 72 karakter di semua tempat.
+- Pembersihan rutin: log email lebih dari 90 hari, tautan reset kedaluwarsa, dan notifikasi terbaca lebih dari 180 hari.
+- Data contoh (`npm run db:reset`) kini berisi riwayat awal sertifikat.
+- Kode dirapikan tanpa mengubah tampilan: logika alur pengajuan dipecah per bagian (`services/workflow/`), rute Super Admin per menu (`routes/superadmin/`), dan halaman Ajukan Layanan per langkah (`pages/client/ajukan/`).
+- File `.env` selalu dibaca dari folder `server`; `CLIENT_URL` dengan garis miring di akhir dirapikan otomatis; peringatan di log produksi bila SMTP belum diatur atau `CLIENT_URL` belum https.
+- `npm run db:reset` dan `npm run db:init` ditolak saat `NODE_ENV=production`.
+
+### Diperbaiki
+
+- Dialog konfirmasi kedua yang muncul tepat setelah dialog pertama ditutup (mis. konfirmasi data ganda setelah "Buat Akun") ikut hilang sehingga proses tertahan.
+- Saat sesi berakhir, pesan error tidak lagi sempat muncul sebelum halaman pindah ke Masuk.
+
+### Dihapus
+
+- `server/.env.example` dan `server/env.cpanel.example`, digantikan `server/env.example`.
+
+## [1.2.0] – 2026-10-16
+
+### Ditambahkan
+
+- Masa berlaku sertifikat Sertifikasi Produk: saat "Setujui & terbitkan", Admin mengisi tanggal terbit (bawaan hari ini) dan tanggal berakhir (wajib). LHU lab dan sertifikat kalibrasi hanya memakai tanggal terbit.
+- Kolom "Berlaku s.d." di Directory dan Data Sertifikat; tanggal berakhir juga tampil di detail pengajuan.
+- Data Sertifikat: sertifikat yang terbit lewat SILAPP bisa diubah tanggal terbit, tanggal berakhir, dan statusnya.
+- Tombol "Kembali ke Data Sertifikat" di halaman Directory (area admin).
+
+### Diubah
+
+- Status sertifikat menjadi Aktif, Ditangguhkan, dan Dicabut. Data lama berstatus "Tidak Aktif" otomatis menjadi Dicabut.
+- Sertifikat yang melewati tanggal berakhir otomatis tampil sebagai "Berakhir", kecuali yang sudah Dicabut. Filter Directory dan Data Sertifikat mengikuti keempat status ini.
+- Tanggal terbit tidak boleh melewati hari ini dan tanggal berakhir harus setelah tanggal terbit (berlaku juga untuk data proyek lama).
+- Kelola Layanan → Form Pengajuan: pilihan layanan berupa sub-tab, sama seperti tab Ruang Lingkup & Harga.
+- Data Sertifikat: alamat pabrik ditampilkan di bawah nama pabrik agar tabel tidak terlalu lebar.
+- Detail pengajuan pelanggan menampilkan status sertifikat bila Ditangguhkan, Dicabut, atau Berakhir.
+
+### Diperbaiki
+
+- Tanggal dan jam selalu memakai WIB (aplikasi dan sesi database), sehingga waktu pengajuan, riwayat, nomor invoice, dan nomor pengajuan tidak bergeser 7 jam di server hosting yang memakai zona UTC.
+- Nomor invoice tidak bisa kembar walau dua invoice diterbitkan pada saat bersamaan; klik ganda pada pengajuan yang sama tidak membuat dua invoice.
+- Menghapus pengguna internal yang masih dirujuk data lain (mis. lampiran atau verifikasi pembayaran) kini menonaktifkan akun, bukan menampilkan error server.
+
 ## [1.1.1] – 2026-10-16
 
 ### Diubah

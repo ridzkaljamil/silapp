@@ -7,12 +7,19 @@ const ConfirmCtx = createContext(async () => true);
 export function ConfirmProvider({ children }) {
   const [st, setSt] = useState(null);
   const [leaving, setLeaving] = useState(false);
-  const ask = useCallback((opts) => new Promise((resolve) => { setLeaving(false); setSt({ ...opts, resolve }); }), []);
+  const timer = useRef(null);
+  // dialog baru bisa muncul tepat setelah dialog sebelumnya ditutup (mis. konfirmasi lanjutan dari jawaban server):
+  // batalkan penutupan yang tertunda agar dialog baru tidak ikut hilang
+  const ask = useCallback((opts) => new Promise((resolve) => {
+    clearTimeout(timer.current);
+    setLeaving(false);
+    setSt({ ...opts, resolve });
+  }), []);
   const close = (v) => {
     if (!st || leaving) return;
     st.resolve(v);
     setLeaving(true);
-    setTimeout(() => { setSt(null); setLeaving(false); }, 180);
+    timer.current = setTimeout(() => { setSt(null); setLeaving(false); }, 180);
   };
   useEffect(() => {
     if (!st) return undefined;

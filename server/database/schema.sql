@@ -5,7 +5,7 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
-DROP TABLE IF EXISTS drafts, doc_templates, notifications, survey_followups, survey_answers, survey_responses, survey_questions, settings, legacy_certificates,
+DROP TABLE IF EXISTS reminder_log, email_outbox, password_resets, certificate_logs, drafts, doc_templates, notifications, survey_followups, survey_answers, survey_responses, survey_questions, settings, legacy_certificates,
   findings, service_fields, service_documents,
   certificates, status_logs, payments, documents, samples, equipment,
   application_parameters, application_details, applications, product_parameters, products,
@@ -30,6 +30,7 @@ CREATE TABLE users (
   avatar        VARCHAR(255) NULL,                    -- nama file foto profil di uploads/
   is_active     TINYINT(1) NOT NULL DEFAULT 1,
   must_change_password TINYINT(1) NOT NULL DEFAULT 0,   -- akun dibuat Admin: wajib ganti sandi saat login pertama
+  token_version INT NOT NULL DEFAULT 0,                -- naik saat sandi diganti/di-reset: sesi lama otomatis keluar
   created_by    INT NULL,
   created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
@@ -210,7 +211,7 @@ CREATE TABLE documents (
 CREATE TABLE payments (
   id             INT AUTO_INCREMENT PRIMARY KEY,
   application_id INT NOT NULL,
-  invoice_no     VARCHAR(40) NOT NULL,
+  invoice_no     VARCHAR(40) NOT NULL UNIQUE,
   invoice_seq    INT NULL,                    -- nomor urut per layanan per tahun (001/PSU/KIM/X/2026)
   invoice_year   INT NULL,
   amount         DECIMAL(14,2) NULL,          -- grand total yang dibayar (harga + PPN − PPh 23)
@@ -259,9 +260,9 @@ CREATE TABLE certificates (
   application_id    INT NOT NULL UNIQUE,
   certificate_no    VARCHAR(60) NOT NULL UNIQUE,
   issued_at         DATE NOT NULL,
-  expires_at        DATE NULL,
+  expires_at        DATE NULL,                        -- masa berlaku (wajib untuk Sertifikasi Produk; LHU/kalibrasi kosong)
   file_path         VARCHAR(255) NULL,
-  status            ENUM('aktif','tidak_aktif') NOT NULL DEFAULT 'aktif',
+  status            ENUM('aktif','ditangguhkan','dicabut') NOT NULL DEFAULT 'aktif',  -- "Berakhir" ditampilkan otomatis bila expires_at lewat
   show_in_directory TINYINT(1) NOT NULL DEFAULT 1,
   CONSTRAINT fk_cert_app FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;
@@ -394,7 +395,9 @@ CREATE TABLE legacy_certificates (
   sni_no          VARCHAR(80)  NOT NULL,
   certificate_no  VARCHAR(80)  NOT NULL UNIQUE,
   issued_at       DATE NOT NULL,
-  status          ENUM('aktif','tidak_aktif') NOT NULL DEFAULT 'aktif',
+  expires_at      DATE NULL,
+  status          ENUM('aktif','ditangguhkan','dicabut') NOT NULL DEFAULT 'aktif',
+  show_in_directory TINYINT(1) NOT NULL DEFAULT 1,
   created_by      INT NULL,
   created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB;
@@ -418,4 +421,33 @@ CREATE TABLE doc_templates (
   original_name VARCHAR(255) NOT NULL,
   sort_order    INT NOT NULL DEFAULT 0,
   updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+-- Riwayat sertifikat: terbit, perubahan status (dengan alasan), tanggal, dan tampil di Directory
+CREATE TABLE certificate_logs (
+  id INT AUTO_INCREMENT PRIMARY KEY, source ENUM('silapp','lama') NOT NULL, cert_id INT NOT NULL, certificate_no VARCHAR(80) NOT NULL,
+  action ENUM('terbit','status','ubah','tampil') NOT NULL, status VARCHAR(20) NULL, note TEXT NULL,
+  user_id INT NULL, pic_label VARCHAR(160) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_certlog (source, cert_id)
+) ENGINE=InnoDB;
+
+-- Tautan reset kata sandi (token disimpan dalam bentuk hash, berlaku 30 menit, sekali pakai)
+CREATE TABLE password_resets (
+  id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, token_hash CHAR(64) NOT NULL UNIQUE, expires_at DATETIME NOT NULL,
+  used_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  CONSTRAINT fk_pr_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+
+-- Antrean email: semua email dicatat, yang gagal dicoba ulang otomatis; isi email dihapus setelah terkirim
+CREATE TABLE email_outbox (
+  id INT AUTO_INCREMENT PRIMARY KEY, to_addr VARCHAR(255) NOT NULL, subject VARCHAR(255) NOT NULL, body MEDIUMTEXT NULL,
+  attachments TEXT NULL, status ENUM('antri','terkirim','gagal','dilewati') NOT NULL DEFAULT 'antri', attempts INT NOT NULL DEFAULT 0,
+  last_error VARCHAR(500) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at DATETIME NULL,
+  KEY idx_outbox_status (status, created_at)
+) ENGINE=InnoDB;
+
+-- Pengingat yang sudah dikirim (agar tidak terkirim dua kali)
+CREATE TABLE reminder_log (
+  id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(30) NOT NULL, ref_id INT NOT NULL, mark VARCHAR(30) NOT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_reminder (kind, ref_id, mark)
 ) ENGINE=InnoDB;

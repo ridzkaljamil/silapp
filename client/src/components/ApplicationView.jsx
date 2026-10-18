@@ -6,7 +6,8 @@ import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { StatusPill, StepTrack, StepLegend, StepsList, LogList, fmtDate, rupiah } from './ui';
 import { Sheet } from './overlays';
-import { docWord } from '../lib/constants';
+import { docWord, CERT_STATE } from '../lib/constants';
+import { SlaLate } from './AppTable';
 
 const PST = { antri: ['pill-progress', 'Antrian'], uji: ['pill-action', 'Dalam Pengujian'], selesai: ['pill-done', 'Selesai'] };
 const CAT = { mayor: 'Mayor', minor: 'Minor', observasi: 'Observasi' };
@@ -260,6 +261,7 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
             <h1>{title}</h1>
             <StatusPill value={app.condition} />
             {app.is_package && <span className="pill pill-purple">Paket LSPro + Lab</span>}
+            {admin && <SlaLate sla={app.sla} />}
           </div>
           <div className="text-muted2 small"><span className="mono">{app.application_no}</span> · {app.service_name}{admin && ` · ${app.company_name}`} · diajukan {fmtDate(app.created_at)}</div>
         </div>
@@ -269,7 +271,7 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
       {decision && !decision.quiet && <div className="decision-m">{decision.body}</div>}
       {app.status === 'ditolak' && <div className="alert alert-danger mb-3"><b>Pengajuan ditutup.</b> {app.reject_note}</div>}
       {app.status === 'batal' && <div className="alert alert-secondary mb-3"><b>Pengajuan dibatalkan pelanggan.</b> {app.reject_note}</div>}
-      {app.status === 'selesai' && app.certificate && <div className="alert alert-success mb-3"><b>{docName} {app.certificate.certificate_no}</b> terbit {fmtDate(app.certificate.issued_at)}.{!app.survey_done && (admin ? ' Pelanggan belum mengisi survei kepuasan.' : ' Isi survei kepuasan untuk mengunduh dokumen.')}</div>}
+      {app.status === 'selesai' && app.certificate && <div className={`alert ${app.certificate.state === 'aktif' ? 'alert-success' : 'alert-warning'} mb-3`}><b>{docName} {app.certificate.certificate_no}</b> terbit {fmtDate(app.certificate.issued_at)}{app.certificate.expires_at && <>, berlaku sampai {fmtDate(app.certificate.expires_at)}</>}.{app.certificate.state !== 'aktif' && CERT_STATE[app.certificate.state] && <> Status: <b>{CERT_STATE[app.certificate.state][1]}</b>.</>}{app.certificate.status_note && <> Alasan: {app.certificate.status_note}</>}{!app.survey_done && app.certificate.can_download !== false && (admin ? ' Pelanggan belum mengisi survei kepuasan.' : ' Isi survei kepuasan untuk mengunduh dokumen.')}</div>}
 
       <section className="panel panel-b mb-4 d-flex flex-column gap-3 prog-panel" aria-label="Progres">
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">

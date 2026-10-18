@@ -1,9 +1,23 @@
 /**
- * Membuat ulang tabel (schema.sql) lalu mengisi data awal:
- * layanan + status tracking, ruang lingkup, akun demo, dan beberapa pengajuan contoh.
- * Jalankan: npm run db:reset
+ * Membuat ulang tabel (schema.sql) lalu mengisi data awal.
+ *   npm run db:reset       data master + akun demo (sandi password123) + pengajuan contoh, memakai server/.env
+ *   npm run db:reset:demo  sama, memakai server/.env.demo (database & Vercel Blob untuk hosting demo)
+ *   npm run db:init        data master saja (layanan, tahapan, form, harga, ruang lingkup, survei, pengaturan), tanpa akun
+ * Semua perintah ini MENGHAPUS seluruh data lama, jadi ditolak saat NODE_ENV=production kecuali ditambah --paksa.
  */
-require('dotenv').config({ path: require('path').join(__dirname, '..', '.env') });
+// argumen: file env lain (opsional, relatif terhadap folder server) dan penanda --bersih / --paksa
+const ARGS = process.argv.slice(2);
+const BERSIH = ARGS.includes('--bersih');
+const envArg = ARGS.find((a) => !a.startsWith('--'));
+const ENV_FILE = envArg ? require('path').resolve(__dirname, '..', envArg) : require('path').join(__dirname, '..', '.env');
+if (!require('fs').existsSync(ENV_FILE)) { console.error(`File ${ENV_FILE} tidak ditemukan.`); process.exit(1); }
+require('dotenv').config({ path: ENV_FILE });
+if (process.env.NODE_ENV === 'production' && !ARGS.includes('--paksa')) {
+  console.error('\n✗ Dibatalkan: perintah ini menghapus SELURUH data di database dan tidak boleh dijalankan di server produksi.' +
+    '\n  Untuk server baru, import file database/silapp-init.sql lewat phpMyAdmin (lihat DEPLOY-CPANEL.md).\n');
+  process.exit(1);
+}
+process.env.TZ = process.env.APP_TZ || 'Asia/Jakarta';
 const fs = require('fs');
 const path = require('path');
 const mysql = require('mysql2/promise');
@@ -11,6 +25,7 @@ const bcrypt = require('bcryptjs');
 const { SPC, SP_PRODUCTS } = require('./scope-data');
 const { LAB_PRICES } = require('./price-data');
 const { taxes } = require('../src/utils/pricing');
+const storage = require('../src/utils/storage');
 
 const ST = (c, n, p, o = {}) => ({ c, n, p, ...o });
 const STEPS = {
@@ -150,9 +165,10 @@ const SURVEY_INTRO = {
 const THANKS = 'Terima kasih atas penilaian dan masukan Anda. Tanggapan Anda sangat berarti bagi PT Penilai Standar Uji (PSU) dan akan kami gunakan untuk meningkatkan mutu layanan secara berkelanjutan.';
 // Proyek sertifikasi sebelum SILAPP (contoh/dummy)
 const LEGACY = [
-  ['PT Contoh Pangan Lestari', 'Kab. Bekasi, Jawa Barat', 'Biskuit', 'SNI 2973:2011', 'PSU-SPPT-2023-0012', '2023-03-14', 'aktif'],
-  ['CV Kopi Nusantara Contoh', 'Kab. Temanggung, Jawa Tengah', 'Kopi Instan', 'SNI 2983:2014', 'PSU-SPPT-2022-0031', '2022-08-02', 'aktif'],
-  ['PT Gula Manis Contoh', 'Kab. Lampung Tengah, Lampung', 'Gula Kristal Putih', 'SNI 3140.3:2020', 'PSU-SPPT-2021-0007', '2021-05-19', 'tidak_aktif'],
+  ['PT Contoh Pangan Lestari', 'Kab. Bekasi, Jawa Barat', 'Biskuit', 'SNI 2973:2011', 'PSU-SPPT-2023-0012', '2023-03-14', '2027-03-13', 'aktif'],
+  ['PT Saus Sedap Contoh', 'Kota Tangerang, Banten', 'Saus Sambal', 'SNI 2976:2006', 'PSU-SPPT-2024-0045', '2024-11-05', '2028-11-04', 'ditangguhkan'],
+  ['CV Kopi Nusantara Contoh', 'Kab. Temanggung, Jawa Tengah', 'Kopi Instan', 'SNI 2983:2014', 'PSU-SPPT-2022-0031', '2022-08-02', '2026-08-01', 'aktif'],
+  ['PT Gula Manis Contoh', 'Kab. Lampung Tengah, Lampung', 'Gula Kristal Putih', 'SNI 3140.3:2020', 'PSU-SPPT-2021-0007', '2021-05-19', '2025-05-18', 'dicabut'],
 ];
 
 /** PDF minimal untuk contoh sertifikat. */
@@ -183,7 +199,10 @@ const USERS = [
   const conn = await mysql.createConnection({
     host: process.env.DB_HOST, port: +process.env.DB_PORT || 3306, user: process.env.DB_USER,
     password: process.env.DB_PASS, database: process.env.DB_NAME, multipleStatements: true,
+    ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: process.env.DB_SSL_STRICT !== 'false' } : undefined,
   });
+  await conn.query(`SET time_zone = ${conn.escape(process.env.DB_TIMEZONE || '+07:00')}`);
+  console.log(`> database ${process.env.DB_NAME} di ${process.env.DB_HOST}, file di ${storage.IS_BLOB ? 'Vercel Blob' : 'server/uploads'}`);
   console.log('> membuat tabel ...');
   await conn.query(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
 
@@ -241,8 +260,22 @@ const USERS = [
   }
   await conn.query('INSERT INTO settings (skey, svalue) VALUES (?,?),(?,?),(?,?)',
     ['thank_you_text', THANKS, 'contact_phone', CONTACT.phone, 'contact_email', CONTACT.email]);
+  if (BERSIH) {
+    // data master saja: akun Super Admin pertama dibuat dari SUPERADMIN_* di .env saat server dinyalakan,
+    // template dokumen disalin otomatis ke penyimpanan file saat server pertama kali berjalan
+    await conn.end();
+    console.log('✓ selesai. Data master siap, belum ada akun pengguna.');
+    return;
+  }
+  // riwayat awal sertifikat contoh (alasan contoh untuk yang ditangguhkan/dicabut)
+  const REASON = { ditangguhkan: 'Hasil surveilan belum memenuhi persyaratan, menunggu tindakan perbaikan.', dicabut: 'Tidak menindaklanjuti hasil surveilan dalam batas waktu.' };
+  const certLog = (source, id, no, action, status, note, at) => conn.query(
+    'INSERT INTO certificate_logs (source, cert_id, certificate_no, action, status, note, pic_label, created_at) VALUES (?,?,?,?,?,?,?,?)',
+    [source, id, no, action, status, note, 'Admin', at]);
   for (const l of LEGACY) {
-    await conn.query('INSERT INTO legacy_certificates (factory_name, factory_address, product, sni_no, certificate_no, issued_at, status) VALUES (?,?,?,?,?,?,?)', l);
+    const [r] = await conn.query('INSERT INTO legacy_certificates (factory_name, factory_address, product, sni_no, certificate_no, issued_at, expires_at, status) VALUES (?,?,?,?,?,?,?,?)', l);
+    await certLog('lama', r.insertId, l[4], 'terbit', 'aktif', `Data proyek sebelum SILAPP ditambahkan (terbit ${l[5]}, berlaku sampai ${l[6]}).`, `${l[5]} 09:00:00`);
+    if (REASON[l[7]]) await certLog('lama', r.insertId, l[4], 'status', l[7], REASON[l[7]], `${l[5].slice(0, 4) * 1 + 1}${l[5].slice(4)} 10:00:00`);
   }
 
   console.log('> akun demo (sandi: password123) ...');
@@ -256,16 +289,13 @@ const USERS = [
   }
 
   console.log('> pengajuan contoh ...');
-  const UP = path.join(__dirname, '..', 'uploads');
-  fs.mkdirSync(UP, { recursive: true });
   // data lama dihapus, jadi file unggahan lama ikut dibersihkan
-  for (const f of fs.readdirSync(UP)) if (f !== '.gitkeep') fs.rmSync(path.join(UP, f), { force: true });
+  await storage.clearAll();
   for (const [i, [name, desc, file]] of TEMPLATES.entries()) {
-    const stored = `template-${file}`;
-    fs.copyFileSync(path.join(__dirname, 'templates', file), path.join(UP, stored));
+    const stored = await storage.save(fs.readFileSync(path.join(__dirname, 'templates', file)), file, 'template-');
     await conn.query('INSERT INTO doc_templates (name, description, file_path, original_name, sort_order) VALUES (?,?,?,?,?)', [name, desc, stored, file, i]);
   }
-  const putPdf = (name, title) => { fs.writeFileSync(path.join(UP, name), samplePdf(title)); return name; };
+  const putPdf = (name, title) => storage.save(samplePdf(title), name);
   const [[npk]] = await conn.query("SELECT id FROM products WHERE name='Pupuk NPK Padat' AND category='Uji SNI' AND service_id=?", [svcId.KIM]);
   const [npkParams] = await conn.query('SELECT id, name, method, price FROM product_parameters WHERE product_id=? LIMIT 3', [npk.id]);
   const prod = async (name) => (await conn.query('SELECT id, name, standard_no FROM products WHERE name=? AND service_id=?', [name, svcId.SP]))[0][0];
@@ -276,9 +306,11 @@ const USERS = [
   const addMonths = (d, m) => { const x = new Date(d); x.setMonth(x.getMonth() + m); return x; };
   const spDetails = (pabrik, alamat, kota, merek) => [['nama_pabrik', 'Nama Pabrik', pabrik], ['alamat_pabrik', 'Alamat Pabrik', alamat], ['kota_provinsi', 'Kota Pabrik', kota.split(', ')[0]], ['provinsi_pabrik', 'Provinsi Pabrik', kota.split(', ')[1] || ''], ['merek_jenis', 'Merek & Jenis', merek]];
 
+  // berkas persyaratan SP yang diunggah pelanggan saat mengajukan (berkas contoh)
+  const SP_DOCS = ['Surat Permohonan', 'Surat Kesediaan Surveillance', 'Surat Pernyataan Keaslian Dokumen', 'Akta Perusahaan & NIB'];
   const samples = [
     // SP di ST-06, sudah audit dengan temuan
-    { no: 'PSU-SP-2609-0001', code: 'SLP26-X2KD4M7A', u: 'rina', svc: 'SP', pid: beras.id, label: `Beras · ${beras.standard_no}`, step: 6, pay: 'terverifikasi', amount: 25000000,
+    { no: 'PSU-SP-2609-0001', code: 'SLP26-X2KD4M7A', u: 'rina', svc: 'SP', docs: SP_DOCS, pid: beras.id, label: `Beras · ${beras.standard_no}`, step: 6, pay: 'terverifikasi', amount: 25000000,
       scheme: null, origin: 'dn', type: 'Sertifikasi Awal', details: spDetails('PT Sinar Contoh Abadi – Pabrik Karawang', 'Jl. Industri Contoh No. 8, Kawasan KIIC', 'Kab. Karawang, Jawa Barat', 'Beras Sinar · Premium'),
       audit: 3, findings: [['minor', 'Catatan pemantauan suhu gudang tidak lengkap untuk 2 minggu terakhir.'], ['observasi', 'Label palet sebaiknya mencantumkan tanggal penerimaan.']] },
     // Lab kimia di LAB-05
@@ -287,9 +319,9 @@ const USERS = [
     { no: 'PSU-KAL-2610-0001', code: 'SLP26-9RTE3LQW', u: 'dimas', svc: 'KAL', pid: null, label: 'Timbangan digital AND FX-3000i', step: 1, pay: 'belum', location: 'lab' },
     // SP paket LSPro + Lab di ST-03, invoice belum terbit
     { no: 'PSU-SP-2610-0002', code: 'SLP26-M4PQ7HZT', u: 'dimas', svc: 'SP', pid: kopi.id, label: `Kopi Instan · ${kopi.standard_no} · Tipe 5`, step: 3, pay: 'belum', scheme: 'Tipe 5', origin: 'dn', type: 'Sertifikasi Awal, Surveillance', pkg: 1,
-      details: spDetails('CV Tani Subur Persada', 'Jl. Raya Contoh Km 4', 'Kab. Malang, Jawa Timur', '1. Kopi Subur · Original\n2. Kopi Subur · Mocca'), docs: ['Surat Kesediaan Surveillance', 'Surat Pernyataan Keaslian Dokumen'] },
+      details: spDetails('CV Tani Subur Persada', 'Jl. Raya Contoh Km 4', 'Kab. Malang, Jawa Timur', '1. Kopi Subur · Original\n2. Kopi Subur · Mocca'), docs: ['Surat Kesediaan Surveillance', 'Surat Pernyataan Keaslian Dokumen', 'Akta Perusahaan & NIB'] },
     // SP selesai, sertifikat terbit, survei belum diisi
-    { no: 'PSU-SP-2608-0003', code: 'SLP26-R8NB5JVC', u: 'rina', svc: 'SP', pid: minyak.id, label: `Minyak Goreng Sawit · ${minyak.standard_no} · Tipe 5`, step: 10, pay: 'terverifikasi', amount: 28000000, scheme: 'Tipe 5', origin: 'dn', type: 'Sertifikasi Awal', done: 'PSU-SPPT-2026-0001',
+    { no: 'PSU-SP-2608-0003', code: 'SLP26-R8NB5JVC', u: 'rina', svc: 'SP', docs: SP_DOCS, pid: minyak.id, label: `Minyak Goreng Sawit · ${minyak.standard_no} · Tipe 5`, step: 10, pay: 'terverifikasi', amount: 28000000, scheme: 'Tipe 5', origin: 'dn', type: 'Sertifikasi Awal', done: 'PSU-SPPT-2026-0001',
       details: spDetails('PT Sinar Contoh Abadi – Pabrik Cikarang', 'Jl. Contoh Raya Blok C-5, Cikarang', 'Kab. Bekasi, Jawa Barat', 'Sinar Gold · Kemasan 2 L') },
     // SP Tipe 1b (produk impor per batch) di tahap Sampling — alur khusus 1b tanpa audit
     { no: 'PSU-SP-2610-0004', code: 'SLP26-B1QK8TNV', u: 'rina', svc: 'SP', pid: impor.id, label: `${impor.name} · ${impor.standard_no} · Tipe 1b`, step: 5, pay: 'terverifikasi', amount: 18000000, scheme: 'Tipe 1b', flow: '1B', origin: 'ln', type: 'Sertifikasi Awal',
@@ -336,11 +368,11 @@ const USERS = [
       const no = `${String(invSeq[x.svc]).padStart(3, '0')}/PSU/${x.svc}/${['I', 'II', 'III', 'IV', 'V', 'VI', 'VII', 'VIII', 'IX', 'X', 'XI', 'XII'][ago(x.step + 1).getMonth()]}/${ago(x.step + 1).getFullYear()}`;
       await conn.query(`INSERT INTO payments (application_id, invoice_no, invoice_seq, invoice_year, amount, dpp, dpp_lain, ppn, total, pph23, with_pph23, items, status, proof_path, paid_at, verified_at, created_at)
         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, [id, no, invSeq[x.svc], ago(x.step + 1).getFullYear(), t.grandTotal, t.price, t.dppLain, t.ppn, t.total, t.pph23, t.pph23 ? 1 : 0,
-        JSON.stringify(x.items || [{ label: `Biaya ${x.label}`, amount: x.amount }]), 'terverifikasi', putPdf(`seed-bukti-${id}.pdf`, 'Bukti transfer (contoh)'), ago(x.step), ago(x.step), ago(x.step + 1)]);
+        JSON.stringify(x.items || [{ label: `Biaya ${x.label}`, amount: x.amount }]), 'terverifikasi', await putPdf(`seed-bukti-${id}.pdf`, 'Bukti transfer (contoh)'), ago(x.step), ago(x.step), ago(x.step + 1)]);
     }
     for (const d of x.docs || []) {
       await conn.query('INSERT INTO documents (application_id, doc_type, original_name, file_path, step_order, uploaded_by) VALUES (?,?,?,?,?,?)',
-        [id, d, `${d.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.pdf`, putPdf(`seed-${id}-${d.length}.pdf`, d), 1, uid[x.u]]);
+        [id, d, `${d.replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.pdf`, await putPdf(`seed-${id}-${d.length}.pdf`, d), 1, uid[x.u]]);
     }
     if (x.findings) {
       const rep = ago(x.audit);
@@ -352,8 +384,9 @@ const USERS = [
         VALUES (?,?,?,?,?,?,?,?)`, [id, 5, 'ST-05', steps[4].name, 'temuan', 'Laporan audit terbit dengan 1 temuan minor dan 1 observasi. Mohon perbaiki sebelum tenggat.', 'Admin', ago(x.audit)]);
     }
     if (x.done) {
-      await conn.query('INSERT INTO certificates (application_id, certificate_no, issued_at, file_path) VALUES (?,?,?,?)',
-        [id, x.done, ymd(ago(1)), putPdf(`seed-sertifikat-${id}.pdf`, `Sertifikat SPPT SNI ${x.done}`)]);
+      const [c] = await conn.query('INSERT INTO certificates (application_id, certificate_no, issued_at, expires_at, file_path) VALUES (?,?,?,?,?)',
+        [id, x.done, ymd(ago(1)), ymd(addMonths(ago(1), 48)), await putPdf(`seed-sertifikat-${id}.pdf`, `Sertifikat SPPT SNI ${x.done}`)]);
+      await certLog('silapp', c.insertId, x.done, 'terbit', 'aktif', `Terbit lewat pengajuan ${x.no} (terbit ${ymd(ago(1))}, berlaku sampai ${ymd(addMonths(ago(1), 48))}).`, ago(1));
     }
     if (x.svc === 'KAL') {
       await conn.query('INSERT INTO equipment (application_id, name, brand_model, serial_number, range_capacity, resolution, calibration_points) VALUES (?,?,?,?,?,?,?)',

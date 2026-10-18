@@ -135,7 +135,7 @@ const MENUS = {
   ],
   superadmin: [
     { label: 'Operasional', items: [I('/admin', 'Dashboard', 'grid-1x2'), I('/admin/antrean', 'Antrean Pengajuan', 'inbox', { badge: true }), I('/admin/pelanggan', 'Akun Pelanggan', 'person-plus'), I('/admin/sertifikat', 'Data Sertifikat', 'patch-check')] },
-    { label: 'Pengaturan', items: [I('/admin/pengguna', 'Pengguna Internal', 'people'), I('/admin/layanan', 'Kelola Layanan', 'layers'), I('/admin/template', 'Template Dokumen', 'file-earmark-word'), I('/admin/survei', 'Survei Kepuasan', 'star')] },
+    { label: 'Pengaturan', items: [I('/admin/pengguna', 'Pengguna Internal', 'people'), I('/admin/layanan', 'Kelola Layanan', 'layers'), I('/admin/template', 'Template Dokumen', 'file-earmark-word'), I('/admin/survei', 'Survei Kepuasan', 'star'), I('/admin/email', 'Log Email', 'envelope')] },
   ],
 };
 const readCollapsed = () => { try { return localStorage.getItem('silapp_side') === 'min'; } catch { return false; } };

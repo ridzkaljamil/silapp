@@ -1,7 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { q, one } = require('./db');
-const { UPLOAD_DIR } = require('../utils/upload');
+const storage = require('../utils/storage');
 
 /** Kolom yang ditambahkan setelah rilis awal. Ditambahkan otomatis jika belum ada. */
 const COLUMNS = [
@@ -43,6 +43,11 @@ const COLUMNS = [
   ['findings', 'corrective_action', 'TEXT NULL AFTER root_cause'],
   ['service_fields', 'multiple', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER show_when'],
   ['service_documents', 'hide_schemes', 'VARCHAR(160) NULL AFTER show_when'],
+  // masa berlaku sertifikat proyek sebelum SILAPP
+  ['legacy_certificates', 'expires_at', 'DATE NULL AFTER issued_at'],
+  ['legacy_certificates', 'show_in_directory', 'TINYINT(1) NOT NULL DEFAULT 1 AFTER status'],
+  // sesi login dicabut saat kata sandi diganti/di-reset (dibandingkan dengan isi token)
+  ['users', 'token_version', 'INT NOT NULL DEFAULT 0 AFTER must_change_password'],
 ];
 
 /** Tabel yang ditambahkan setelah rilis awal. */
@@ -66,6 +71,28 @@ const TABLES = [
   `CREATE TABLE IF NOT EXISTS doc_templates (
     id INT AUTO_INCREMENT PRIMARY KEY, name VARCHAR(120) NOT NULL UNIQUE, description VARCHAR(255) NULL, file_path VARCHAR(255) NOT NULL,
     original_name VARCHAR(255) NOT NULL, sort_order INT NOT NULL DEFAULT 0, updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+  ) ENGINE=InnoDB`,
+  // riwayat sertifikat, reset kata sandi, antrean email, dan pengingat yang sudah dikirim (persiapan rilis)
+  `CREATE TABLE IF NOT EXISTS certificate_logs (
+    id INT AUTO_INCREMENT PRIMARY KEY, source ENUM('silapp','lama') NOT NULL, cert_id INT NOT NULL, certificate_no VARCHAR(80) NOT NULL,
+    action ENUM('terbit','status','ubah','tampil') NOT NULL, status VARCHAR(20) NULL, note TEXT NULL,
+    user_id INT NULL, pic_label VARCHAR(160) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    KEY idx_certlog (source, cert_id)
+  ) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS password_resets (
+    id INT AUTO_INCREMENT PRIMARY KEY, user_id INT NOT NULL, token_hash CHAR(64) NOT NULL UNIQUE, expires_at DATETIME NOT NULL,
+    used_at DATETIME NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_pr_user FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS email_outbox (
+    id INT AUTO_INCREMENT PRIMARY KEY, to_addr VARCHAR(255) NOT NULL, subject VARCHAR(255) NOT NULL, body MEDIUMTEXT NULL,
+    attachments TEXT NULL, status ENUM('antri','terkirim','gagal','dilewati') NOT NULL DEFAULT 'antri', attempts INT NOT NULL DEFAULT 0,
+    last_error VARCHAR(500) NULL, created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, sent_at DATETIME NULL,
+    KEY idx_outbox_status (status, created_at)
+  ) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS reminder_log (
+    id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(30) NOT NULL, ref_id INT NOT NULL, mark VARCHAR(30) NOT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_reminder (kind, ref_id, mark)
   ) ENGINE=InnoDB`,
 ];
 
@@ -278,24 +305,38 @@ const ONCE = {
     await q("DELETE FROM service_fields WHERE field_key='merek_spesifikasi'");
   },
   async template_dokumen() {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
     for (const [i, [name, desc, file]] of TEMPLATES.entries()) {
       if (await one('SELECT id FROM doc_templates WHERE name=?', [name])) continue;
-      const stored = `template-${file}`;
-      fs.copyFileSync(path.join(__dirname, '..', '..', 'database', 'templates', file), path.join(UPLOAD_DIR, stored));
+      const stored = await storage.save(fs.readFileSync(path.join(__dirname, '..', '..', 'database', 'templates', file)), file, 'template-');
       await q('INSERT INTO doc_templates (name, description, file_path, original_name, sort_order) VALUES (?,?,?,?,?)', [name, desc, stored, file, i]);
     }
+  },
+  // status sertifikat: Aktif, Ditangguhkan, Dicabut ("Tidak Aktif" lama menjadi Dicabut)
+  async status_sertifikat() {
+    for (const t of ['certificates', 'legacy_certificates']) {
+      await q(`ALTER TABLE ${t} MODIFY status ENUM('aktif','tidak_aktif','ditangguhkan','dicabut') NOT NULL DEFAULT 'aktif'`);
+      await q(`UPDATE ${t} SET status='dicabut' WHERE status='tidak_aktif'`);
+      await q(`ALTER TABLE ${t} MODIFY status ENUM('aktif','ditangguhkan','dicabut') NOT NULL DEFAULT 'aktif'`);
+    }
+  },
+  // nomor invoice tidak boleh kembar (dua invoice diterbitkan bersamaan); dilewati bila data lama sudah ada yang kembar
+  async unik_nomor_invoice() {
+    const idx = await one("SELECT 1 x FROM information_schema.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='payments' AND COLUMN_NAME='invoice_no' AND NON_UNIQUE=0 LIMIT 1");
+    if (idx) return;
+    const dup = await one('SELECT invoice_no FROM payments GROUP BY invoice_no HAVING COUNT(*) > 1 LIMIT 1');
+    if (dup) { console.warn(`! Nomor invoice ${dup.invoice_no} kembar, indeks unik nomor invoice tidak dipasang.`); return; }
+    await q('ALTER TABLE payments ADD UNIQUE KEY uq_invoice_no (invoice_no)');
   },
   // template bawaan diganti versi berkop surat PSU dengan isian NIB dan NPWP terpisah
   // (template yang sudah diganti Super Admin tidak disentuh)
   async template_kop_nib_npwp() {
-    fs.mkdirSync(UPLOAD_DIR, { recursive: true });
+    // template bawaan dikenali dari nama file aslinya (file pengganti dari Super Admin bernama lain)
     for (const [name, , file] of TEMPLATES) {
-      const stored = `template-${file}`;
-      const t = await one('SELECT id FROM doc_templates WHERE name=? AND file_path=?', [name, stored]);
+      const t = await one('SELECT id, file_path FROM doc_templates WHERE name=? AND original_name=?', [name, file]);
       if (!t) continue;
-      fs.copyFileSync(path.join(__dirname, '..', '..', 'database', 'templates', file), path.join(UPLOAD_DIR, stored));
-      await q('UPDATE doc_templates SET updated_at=NOW() WHERE id=?', [t.id]);
+      const stored = await storage.save(fs.readFileSync(path.join(__dirname, '..', '..', 'database', 'templates', file)), file, 'template-');
+      await q('UPDATE doc_templates SET file_path=?, updated_at=NOW() WHERE id=?', [stored, t.id]);
+      if (t.file_path !== stored) await storage.remove(t.file_path);
     }
   },
 };
@@ -321,3 +362,9 @@ module.exports = async function migrate() {
   // bersihkan notifikasi lama yang sudah dibaca (lebih dari 90 hari)
   await q('DELETE FROM notifications WHERE is_read=1 AND created_at < NOW() - INTERVAL 90 DAY');
 };
+
+/** Pembaruan data sekali jalan yang tidak perlu dijalankan pada database baru dari silapp-init.sql
+ *  (datanya sudah dalam bentuk terbaru). Template dokumen (versi terbaru berkop PSU) dan identitas invoice
+ *  tetap dijalankan saat server pertama menyala karena menyalin file ke penyimpanan / mengisi pengaturan. */
+module.exports.FRESH_DONE = Object.keys(ONCE).filter((n) => !['template_dokumen', 'identitas_invoice'].includes(n));
+

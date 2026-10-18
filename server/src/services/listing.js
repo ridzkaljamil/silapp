@@ -1,12 +1,12 @@
 const { q } = require('../config/db');
-const { getSteps, OPEN_FINDINGS } = require('./workflow');
+const { getSteps, OPEN_FINDINGS, STEP_SINCE } = require('./workflow');
 const { summary } = require('./present');
 
 /** Ambil daftar pengajuan (dengan status tracking) berdasarkan kondisi WHERE. */
 async function listApps(where = '1=1', params = []) {
   const rows = await q(
     `SELECT a.*, s.code service_code, s.name service_name, s.bidang service_bidang, u.company_name, u.name user_name, u.email user_email,
-            ${OPEN_FINDINGS} open_findings,
+            ${OPEN_FINDINGS} open_findings, ${STEP_SINCE} step_since,
             (SELECT COUNT(*) FROM findings f WHERE f.application_id=a.id AND f.status<>'ditutup' AND (f.status='dikirim' OR f.extension_status='diajukan')) findings_review,
             (SELECT COUNT(*) FROM findings f WHERE f.application_id=a.id AND f.status<>'ditutup' AND f.extension_status='diajukan') ext_requests,
             (SELECT MIN(f.due_date) FROM findings f WHERE f.application_id=a.id AND f.status='terbuka' AND f.category<>'observasi') finding_due,

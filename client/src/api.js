@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { UPLOAD_MODE, MAX_FILE_MB } from './lib/format';
 
 const api = axios.create({ baseURL: '/api' });
 
@@ -25,11 +26,39 @@ const startJob = (config) => {
 };
 const endJob = (config) => { if (config?.__job && busy.jobs.delete(config.__job)) emitBusy(); };
 
-api.interceptors.request.use((config) => {
+/** Nama file aman untuk penyimpanan (huruf, angka, titik, strip). */
+const safeName = (n) => (String(n || 'file').normalize('NFKD').replace(/[^\w.-]+/g, '-').replace(/-+/g, '-').slice(-80) || 'file');
+
+/**
+ * Hosting Vercel: file di FormData diunggah langsung ke Vercel Blob lebih dulu (tidak lewat fungsi Vercel yang dibatasi
+ * ±4,5 MB per request), lalu diganti penanda "blob:{...}" di field yang sama. Server membaca penanda itu sebagai file biasa.
+ */
+async function moveFilesToBlob(fd, token) {
+  const { upload } = await import('@vercel/blob/client');
+  const out = new FormData();
+  for (const [key, value] of fd.entries()) {
+    if (value instanceof Blob) {
+      const name = value.name || 'file';
+      const b = await upload(`silapp/${safeName(name)}`, value, {
+        access: 'private', handleUploadUrl: '/api/uploads/blob', headers: { Authorization: `Bearer ${token}` },
+      });
+      out.append(key, `blob:${JSON.stringify({ pathname: b.pathname, name, size: value.size })}`);
+    } else out.append(key, value);
+  }
+  return out;
+}
+
+api.interceptors.request.use(async (config) => {
   const token = localStorage.getItem('silapp_token');
   if (token) config.headers.Authorization = `Bearer ${token}`;
   const writes = config.method && config.method !== 'get';
   if (!config.silent && !config.__job && (writes || config.responseType === 'blob')) startJob(config);
+  if (UPLOAD_MODE === 'blob' && config.data instanceof FormData) {
+    try { config.data = await moveFilesToBlob(config.data, token); } catch (e) {
+      endJob(config);
+      throw Object.assign(new Error('upload'), { response: { data: { message: e?.message?.includes('size') ? 'File terlalu besar.' : 'Gagal mengunggah file. Periksa koneksi lalu coba lagi.' } } });
+    }
+  }
   return config;
 });
 
@@ -53,20 +82,37 @@ api.interceptors.response.use(
       await wait(700 * cfg.__retry);
       return api(cfg);
     }
+    // 413 dari server/hosting (Nginx, LiteSpeed, Vercel) biasanya berupa halaman HTML: ganti dengan pesan yang jelas
+    if (err.response?.status === 413) {
+      err.response.data = { message: `File terlalu besar untuk diterima server. Pastikan setiap file maks. ${MAX_FILE_MB} MB, atau unggah sebagian file lebih dulu.` };
+    }
     if (err.response?.data?.code === 'MUST_CHANGE_PASSWORD' && !location.pathname.startsWith('/ganti-sandi')) {
       location.href = '/ganti-sandi';
     }
     if (err.response?.status === 401 && localStorage.getItem('silapp_token')) {
+      try { sessionStorage.setItem('silapp_notice', err.response.data?.message || 'Sesi berakhir, silakan masuk kembali.'); } catch { /* abaikan */ }
       localStorage.removeItem('silapp_token');
       localStorage.removeItem('silapp_user');
-      if (!location.pathname.startsWith('/masuk')) location.href = '/masuk';
+      if (!location.pathname.startsWith('/masuk')) {
+        location.href = '/masuk';
+        // halaman sedang pindah ke Masuk: biarkan permintaan ini menggantung agar tidak muncul pesan error sesaat
+        return new Promise(() => {});
+      }
     }
     return Promise.reject(err);
   },
 );
 
 /** Ambil pesan error dari respons API. */
-export const errMsg = (e) => e?.response?.data?.message || 'Terjadi kesalahan. Coba lagi.';
+export const errMsg = (e) => {
+  const m = e?.response?.data?.message;
+  if (m) return m;
+  if (!e?.response && e?.code !== 'ERR_CANCELED') return 'Tidak dapat terhubung ke server. Periksa koneksi internet lalu coba lagi.';
+  return 'Terjadi kesalahan. Coba lagi.';
+};
+
+/** Simpan token baru (mis. setelah ganti kata sandi, sesi lama di perangkat lain otomatis keluar). */
+export const setToken = (token) => { if (token) localStorage.setItem('silapp_token', token); };
 
 /** Nama file dari header Content-Disposition (sudah berekstensi & aman), mis. filename*=UTF-8''LHU-PSU-2026.pdf */
 function headerName(h) {
@@ -82,6 +128,11 @@ function headerName(h) {
  */
 export async function download(url, filename) {
   const r = await api.get(url, { responseType: 'blob' });
+  if (r.data.type === 'application/json') {
+    // file besar di hosting Vercel (mis. ZIP semua berkas): server membalas tautan unduh sementara
+    const j = JSON.parse(await r.data.text());
+    if (j.download_url) { location.href = j.download_url; return; }
+  }
   const a = document.createElement('a');
   a.href = URL.createObjectURL(r.data);
   a.download = headerName(r.headers['content-disposition']) || String(filename || 'unduhan').replace(/[\\/:*?"<>|]/g, '-');

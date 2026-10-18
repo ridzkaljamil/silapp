@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import api, { errMsg, download } from '../../api';
 import { useAuth } from '../../AuthContext';
-import { PageHead, Loading, useToast, useConfirm, fmtDate } from '../../components/ui';
+import { PageHead, Loading, useToast, useConfirm, fmtDate, MAX_FILE_MB } from '../../components/ui';
 
 export default function TemplateDokumen() {
   const { user } = useAuth();
@@ -17,6 +17,7 @@ export default function TemplateDokumen() {
 
   const replace = async (t, file) => {
     if (!file) return;
+    if (file.size > MAX_FILE_MB * 1024 * 1024) return toast(`${file.name} melebihi ${MAX_FILE_MB} MB.`, 'danger');
     if (!(await confirm({ title: 'Ganti Template?', body: <>Template <b>{t.name}</b> diganti dengan <b>{file.name}</b>. Pelanggan langsung mengunduh file baru ini.</>, ok: 'Ya, Ganti', icon: 'file-earmark-arrow-up' }))) return;
     const fd = new FormData();
     fd.append('file', file);

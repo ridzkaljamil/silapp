@@ -1,15 +1,16 @@
 /** Area Admin & Super Admin: antrean per bidang, aksi workflow, invoice, temuan, parameter, dashboard. */
 const router = require('express').Router();
 const path = require('path');
-const fs = require('fs');
 const archiver = require('archiver');
 const { q, one } = require('../config/db');
 const { requireAuth, allow } = require('../middleware/auth');
-const { upload, UPLOAD_DIR } = require('../utils/upload');
+const { upload } = require('../utils/upload');
+const storage = require('../utils/storage');
 const wf = require('../services/workflow');
 const { detail } = require('../services/present');
 const { listApps } = require('../services/listing');
 const { sendInvoicePdf, invoiceDraft } = require('../services/invoice');
+const { todayJkt } = require('../utils/certificate');
 
 router.use(requireAuth, allow('admin', 'superadmin'));
 
@@ -30,6 +31,20 @@ const needsPsu = (a) => ['aktif', 'aksi'].includes(a.status) && (a.current_step.
 router.get('/counts', async (req, res, next) => {
   try { const [w, p] = scope(req.user); res.json({ need_action: (await listApps(w, p)).filter(needsPsu).length }); } catch (e) { next(e); }
 });
+
+/** Sertifikat Sertifikasi Produk yang berakhir dalam 90 hari (untuk Super Admin & Admin SP). */
+async function expiringCerts(u) {
+  if (!(u.role === 'superadmin' || u.bidang === 'SP')) return [];
+  const rows = await q(`SELECT 'silapp' source, c.id, c.certificate_no, c.expires_at, c.status, a.id application_id, a.application_no, u.company_name factory_name
+      FROM certificates c JOIN applications a ON a.id=c.application_id JOIN services s ON s.id=a.service_id JOIN users u ON u.id=a.user_id
+     WHERE s.code='SP' AND a.status='selesai' AND c.status<>'dicabut' AND c.expires_at BETWEEN CURDATE() AND CURDATE() + INTERVAL 90 DAY
+    UNION ALL
+    SELECT 'lama', id, certificate_no, expires_at, status, NULL, NULL, factory_name FROM legacy_certificates
+     WHERE status<>'dicabut' AND expires_at BETWEEN CURDATE() AND CURDATE() + INTERVAL 90 DAY
+    ORDER BY expires_at`);
+  const today = new Date(`${todayJkt()}T00:00:00Z`);
+  return rows.map((r) => ({ ...r, days_left: Math.round((new Date(`${String(r.expires_at).slice(0, 10)}T00:00:00Z`) - today) / 86400000) }));
+}
 
 router.get('/dashboard', async (req, res, next) => {
   try {
@@ -57,6 +72,9 @@ router.get('/dashboard', async (req, res, next) => {
         survey_avg: sv[0].avg === null ? null : +sv[0].avg, survey_n: +sv[0].n,
       },
       need_action: apps.filter(needsPsu),
+      // melewati target SLA tahap (hanya saat ditangani PSU), terlama di atas
+      sla_late: apps.filter((a) => a.sla?.late).sort((a, b) => b.sla.over - a.sla.over),
+      cert_expiring: await expiringCerts(req.user),
       per_service: perService, per_month: perMonth, months,
     });
   } catch (e) { next(e); }
@@ -83,7 +101,7 @@ const fresh = async (app) => detail(await wf.loadApp(app.id), 'admin');
 
 /**
  * Aksi admin: action = setujui | minta_tindakan | abaikan | tolak
- * body: note, internal ("1"), certificate_no, doc_name (nama lampiran)
+ * body: note, internal ("1"), certificate_no, issued_at & expires_at (tahap sertifikat; berakhir wajib untuk SP), doc_name (nama lampiran)
  * file: certificate (PDF, tahap sertifikat), attachments[] (lampiran untuk pelanggan, maks. 5)
  * "abaikan" + lampiran = kirim file tanpa mengubah status.
  */
@@ -94,7 +112,8 @@ router.post('/applications/:id/action', upload.fields([{ name: 'certificate', ma
     const { action, note } = req.body;
     const internal = req.body.internal === '1' || req.body.internal === true;
     const opts = { files: req.files?.attachments || [], docName: (req.body.doc_name || '').trim() || undefined };
-    if (action === 'setujui') await wf.approve(app, req.user, { ...opts, note, internal, certificateNo: String(req.body.certificate_no || '').trim().slice(0, 60), certFile: req.files?.certificate?.[0]?.filename });
+    if (action === 'setujui') await wf.approve(app, req.user, { ...opts, note, internal, certificateNo: String(req.body.certificate_no || '').trim().slice(0, 60), certFile: req.files?.certificate?.[0]?.filename,
+      issuedAt: String(req.body.issued_at || '').trim() || undefined, expiresAt: String(req.body.expires_at || '').trim() || undefined });
     else if (action === 'minta_tindakan') await wf.requestAction(app, req.user, note, opts);
     else if (action === 'abaikan') await wf.ignore(app, req.user, note, internal, opts);
     else if (action === 'tolak') await wf.reject(app, req.user, note, opts);
@@ -191,19 +210,19 @@ router.get('/applications/:id/documents-zip', allow('superadmin'), async (req, r
       if (p.invoice_file) files.push([p.invoice_file, uniq(`pembayaran/invoice-${p.invoice_no.replace(/[\\/]/g, '-')}${path.extname(p.invoice_file)}`)]);
       if (p.proof_path) files.push([p.proof_path, uniq(`pembayaran/bukti-bayar-${p.invoice_no.replace(/[\\/]/g, '-')}${path.extname(p.proof_path)}`)]);
     }
-    const existing = files.filter(([f]) => fs.existsSync(path.join(UPLOAD_DIR, f)));
+    const existing = [];
+    for (const [f, name] of files) { const s = await storage.stream(f); if (s) existing.push([s, name]); }
     if (!existing.length) return res.status(404).json({ message: 'Belum ada berkas untuk diunduh.' });
 
     await q('UPDATE applications SET docs_downloaded_at=NOW(3) WHERE id=?', [app.id]);
     await wf.addLog(app, 'unduh', `Super Admin mengunduh semua berkas (${existing.length} file).`, req.user, false);
     await wf.tryAutoAdvance(app);
 
-    res.attachment(`berkas-${app.application_no}.zip`);
     const zip = archiver('zip', { zlib: { level: 6 } });
     zip.on('error', next);
-    zip.pipe(res);
-    for (const [f, name] of existing) zip.file(path.join(UPLOAD_DIR, f), { name });
-    await zip.finalize();
+    for (const [s, name] of existing) zip.append(s, { name });
+    zip.finalize();
+    await storage.sendLarge(res, zip, `berkas-${app.application_no}.zip`, 'application/zip');
   } catch (e) { next(e); }
 });
 
@@ -220,7 +239,7 @@ router.get('/applications/:id/documents/:docId', async (req, res, next) => {
     const app = await handledApp(req);
     const doc = await one('SELECT * FROM documents WHERE id=? AND application_id=?', [req.params.docId, app.id]);
     if (!doc) return res.status(404).json({ message: 'Dokumen tidak ditemukan.' });
-    res.download(path.join(UPLOAD_DIR, doc.file_path), doc.original_name);
+    await storage.send(res, doc.file_path, doc.original_name);
   } catch (e) { next(e); }
 });
 
@@ -236,7 +255,7 @@ router.get('/applications/:id/certificate', async (req, res, next) => {
     const app = await handledApp(req);
     const cert = await one('SELECT * FROM certificates WHERE application_id=?', [app.id]);
     if (!cert?.file_path) return res.status(404).json({ message: 'File belum ada.' });
-    res.download(path.join(UPLOAD_DIR, cert.file_path), `${cert.certificate_no.replace(/[\/\\]/g, '-')}.pdf`);
+    await storage.send(res, cert.file_path, `${cert.certificate_no.replace(/[\/\\]/g, '-')}.pdf`);
   } catch (e) { next(e); }
 });
 
@@ -245,7 +264,7 @@ router.get('/applications/:id/payment-proof', async (req, res, next) => {
     const app = await handledApp(req);
     const pay = await one('SELECT * FROM payments WHERE application_id=? ORDER BY id DESC LIMIT 1', [app.id]);
     if (!pay?.proof_path) return res.status(404).json({ message: 'Bukti bayar belum ada.' });
-    res.download(path.join(UPLOAD_DIR, pay.proof_path), `bukti-bayar-${app.application_no}${path.extname(pay.proof_path)}`);
+    await storage.send(res, pay.proof_path, `bukti-bayar-${app.application_no}${path.extname(pay.proof_path)}`);
   } catch (e) { next(e); }
 });
 

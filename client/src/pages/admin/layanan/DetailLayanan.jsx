@@ -81,6 +81,7 @@ export default function DetailLayanan() {
                   </Fragment>
                 ))}</tbody>
               </table>
+              <div className="form-text">Target SLA dalam hari kalender, dihitung sejak tahap ditangani PSU (saat menunggu pelanggan tidak dihitung). Kosongkan bila tahap tidak punya target. Pengajuan yang melewati target ditandai di Antrean dan Dashboard.</div>
             </div>
           </div>
         )}

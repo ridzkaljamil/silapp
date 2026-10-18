@@ -29,8 +29,14 @@ export const addMonths = (ymd, m) => {
   const last = new Date(y, mo - 1 + m + 1, 0).getDate();
   return ymdOf(new Date(y, mo - 1 + m, Math.min(d, last)));
 };
+/**
+ * Penyimpanan file: 'local' (server/uploads) atau 'blob' (hosting Vercel). Diisi saat build oleh vite.config.js.
+ * Di Vercel batas per file 4 MB karena unduhan lewat fungsi Vercel dibatasi 4,5 MB.
+ */
+// eslint-disable-next-line no-undef
+export const UPLOAD_MODE = typeof __UPLOAD_MODE__ !== 'undefined' ? __UPLOAD_MODE__ : 'local';
 /** Batas ukuran satu file unggahan (sama dengan server). */
-export const MAX_FILE_MB = 10;
+export const MAX_FILE_MB = UPLOAD_MODE === 'blob' ? 4 : 10;
 export const FILE_HINT = `PDF, Word, ZIP, JPG, atau PNG · maks. ${MAX_FILE_MB} MB`;
 /** Ukuran file ringkas: 820 KB / 2,4 MB. */
 export const fileSize = (b) => (b >= 1048576 ? `${(b / 1048576).toLocaleString('id-ID', { maximumFractionDigits: 1 })} MB` : `${Math.max(1, Math.round(b / 1024))} KB`);

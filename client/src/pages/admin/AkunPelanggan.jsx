@@ -21,19 +21,29 @@ export default function AkunPelanggan() {
   useEffect(() => { load(); }, [load]);
   if (!rows) return <Loading />;
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.type === 'checkbox' ? e.target.checked : e.target.value });
-  const save = async () => {
+  const save = async (extra = {}) => {
     setBusy(true);
+    const body = { ...form, ...extra };
     try {
-      if (form.id) { await api.put(`/customers/${form.id}`, form); toast('Data pelanggan disimpan.'); setCreated(null); } else {
-        const r = await api.post('/customers', form);
+      if (form.id) { await api.put(`/customers/${form.id}`, body); toast('Data pelanggan disimpan.'); setCreated(null); } else {
+        const r = await api.post('/customers', body);
         setCreated({ email: form.email, company: form.company_name, pass: r.data.temp_password });
         toast('Akun dibuat. Info login dikirim ke email pelanggan.');
       }
       setForm(null); load();
-    } catch (ex) { toast(errMsg(ex), 'danger'); } finally { setBusy(false); }
+    } catch (ex) {
+      // NIB/NPWP sudah dipakai akun lain (mis. cabang dengan PIC berbeda): minta konfirmasi, bukan langsung ditolak
+      if (ex.response?.data?.code === 'DUPLICATE_COMPANY') {
+        setBusy(false);
+        if (await confirm({ title: 'Perusahaan Sudah Terdaftar?', body: errMsg(ex), ok: 'Ya, Simpan Terpisah', icon: 'exclamation-triangle' })) return save({ confirm_duplicate: true });
+        return null;
+      }
+      toast(errMsg(ex), 'danger');
+    } finally { setBusy(false); }
+    return null;
   };
   const reset = async (u) => {
-    if (!(await confirm({ title: 'Reset Kata Sandi?', body: <>Kata sandi sementara baru akan dikirim ke <b>{u.email}</b>. Pelanggan wajib menggantinya saat login.</>, ok: 'Ya, Reset' }))) return;
+    if (!(await confirm({ title: 'Reset Kata Sandi?', body: <>Kata sandi sementara baru akan dikirim ke <b>{u.email}</b>. Pelanggan wajib menggantinya saat login, dan sesi yang sedang masuk di perangkat lain akan keluar.</>, ok: 'Ya, Reset' }))) return;
     try { const r = await api.post(`/customers/${u.id}/reset-password`); setCreated({ email: u.email, company: u.company_name, pass: r.data.temp_password, reset: true }); } catch (ex) { toast(errMsg(ex), 'danger'); }
   };
   const stateOf = (u) => (!u.is_active ? 'nonaktif' : u.must_change_password ? 'baru' : 'aktif');
@@ -65,7 +75,7 @@ export default function AkunPelanggan() {
           </div>
         )}
       </Sheet>
-      <FormSheet open={!!form} onClose={() => setForm(null)} onSubmit={save} busy={busy} wide icon={form?.id ? 'building-gear' : 'person-plus'}
+      <FormSheet open={!!form} onClose={() => setForm(null)} onSubmit={() => save()} busy={busy} wide icon={form?.id ? 'building-gear' : 'person-plus'}
         confirm={() => (form?.id ? { title: 'Simpan Data Pelanggan?', body: <>Perubahan data <b>{form.company_name}</b> akan disimpan.</> } : { title: 'Buat Akun Pelanggan?', body: <>Akun untuk <b>{form?.company_name}</b> dibuat dan kata sandi sementara dikirim ke <b>{form?.email}</b>.</> })}
         title={form?.id ? 'Ubah Data Pelanggan' : 'Buat Akun Pelanggan'} submitLabel={form?.id ? 'Simpan' : 'Buat Akun & Kirim Email'}
         sub={form?.id ? form.company_name : 'Info login dan kata sandi sementara akan dikirim ke email di bawah.'}>

@@ -1,7 +1,7 @@
-import { useState } from "react";
-import { useNavigate, Navigate, Link } from "react-router-dom";
+import { useEffect, useState } from "react";
+import { useNavigate, Navigate, Link, useSearchParams, useLocation } from "react-router-dom";
 import { useAuth, homeOf } from "../../AuthContext";
-import api, { errMsg } from "../../api";
+import api, { errMsg, setToken } from "../../api";
 import { useContact, waLink } from "../../lib/contact";
 import { SideDeco } from "../../components/Layouts";
 import { useConfirm } from "../../components/feedback";
@@ -31,6 +31,17 @@ export function Login() {
   const [show, setShow] = useState(false);
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  // pesan dari halaman lain: sandi baru tersimpan, atau sesi berakhir karena sandi diganti di perangkat lain
+  const routeNotice = useLocation().state?.notice;
+  const [notice] = useState(() => {
+    try {
+      const v = sessionStorage.getItem("silapp_notice");
+      sessionStorage.removeItem("silapp_notice");
+      return v;
+    } catch {
+      return null;
+    }
+  });
   const submit = async (e) => {
     e.preventDefault();
     setErr("");
@@ -90,6 +101,7 @@ export function Login() {
             <h2 className="h1 mb-1">Masuk</h2>
             <p className="text-muted2 mb-0">Gunakan email dan kata sandi dari PSU.</p>
           </div>
+          {(routeNotice || notice) && !err && <div className={`alert py-2 mb-0 ${routeNotice ? "alert-success" : "alert-warning"}`}>{routeNotice || notice}</div>}
           {err && <div className="alert alert-danger py-2 mb-0">{err}</div>}
           <div>
             <label className="form-label" htmlFor="em">
@@ -98,9 +110,14 @@ export function Login() {
             <input id="em" type="email" autoComplete="username" className="form-control" placeholder="nama@perusahaan.co.id" value={f.email} onChange={(e) => setF({ ...f, email: e.target.value })} required />
           </div>
           <div>
-            <label className="form-label" htmlFor="pw">
-              Kata Sandi
-            </label>
+            <div className="d-flex justify-content-between align-items-baseline gap-2">
+              <label className="form-label" htmlFor="pw">
+                Kata Sandi
+              </label>
+              <Link to="/lupa-sandi" className="small fw-semibold">
+                Lupa kata sandi?
+              </Link>
+            </div>
             <div className="pw-wrap">
               <input id="pw" type={show ? "text" : "password"} autoComplete="current-password" className="form-control" value={f.password} onChange={(e) => setF({ ...f, password: e.target.value })} required />
               <button type="button" className="pw-eye" onClick={() => setShow(!show)} aria-label={show ? "Sembunyikan Kata Sandi" : "Tampilkan Kata Sandi"}>
@@ -113,7 +130,7 @@ export function Login() {
           </button>
           <div className="border-top pt-3 small text-muted2 d-flex flex-column gap-1">
             <span>
-              Belum punya akun atau lupa kata sandi? Hubungi PSU lewat{" "}
+              Belum punya akun? Hubungi PSU lewat{" "}
               <a href={waLink(contact.phone, "Halo PSU, saya butuh bantuan akun SILAPP.")} target="_blank" rel="noreferrer" className="fw-semibold">
                 WhatsApp
               </a>{" "}
@@ -150,6 +167,7 @@ export function GantiSandi() {
     if (!(await ask({ title: "Ganti Kata Sandi?", body: "Gunakan kata sandi baru ini saat masuk berikutnya.", ok: "Ya, Ganti", icon: "key" }))) return null;
     try {
       const r = await api.post("/auth/change-password", f);
+      setToken(r.data.token); // sesi di perangkat lain otomatis keluar, perangkat ini tetap masuk
       setSessionUser(r.data.user);
       if (forced) nav(homeOf(r.data.user));
       else {
@@ -202,6 +220,149 @@ export function GantiSandi() {
         </div>
         <button className="btn btn-primary" style={{ minHeight: 48 }}>
           {forced ? "Simpan & Lanjutkan" : "Simpan Kata Sandi"}
+        </button>
+      </form>
+    </Shell>
+  );
+}
+
+/** Daftar syarat kata sandi baru (dipakai di halaman ganti & buat ulang kata sandi). */
+function PwChecks({ pw, confirm }) {
+  return (
+    <ul className="list-unstyled small mt-2 mb-0 d-flex flex-column gap-1">
+      {[
+        [pw.length >= 8, "Minimal 8 karakter"],
+        [!!confirm && confirm === pw, "Kedua kata sandi baru sama"],
+      ].map(([ok, t]) => (
+        <li key={t} style={{ color: ok ? "var(--ok)" : "var(--muted)" }}>
+          <i className={`bi bi-${ok ? "check-circle-fill" : "circle"} me-2 chk`} />
+          {t}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/** Lupa kata sandi: kirim tautan untuk membuat kata sandi baru ke email akun. */
+export function LupaSandi() {
+  const [email, setEmail] = useState("");
+  const [done, setDone] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr("");
+    setBusy(true);
+    try {
+      setDone((await api.post("/auth/forgot-password", { email })).data.message);
+    } catch (ex) {
+      setErr(errMsg(ex));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <Shell title="Lupa Kata Sandi">
+      {done ? (
+        <>
+          <div className="alert alert-success py-2 mb-0">{done}</div>
+          <p className="text-muted2 small mb-0">Tautan berlaku 30 menit. Tidak menerima email? Tunggu 2 menit lalu minta lagi, atau hubungi PSU.</p>
+          <Link to="/masuk" className="btn btn-primary" style={{ minHeight: 48 }}>
+            Kembali ke Halaman Masuk
+          </Link>
+        </>
+      ) : (
+        <form onSubmit={submit} className="d-flex flex-column gap-3">
+          <p className="text-muted2 mb-0">Masukkan email akun SILAPP Anda. Kami kirimkan tautan untuk membuat kata sandi baru.</p>
+          {err && <div className="alert alert-danger py-2 mb-0">{err}</div>}
+          <div>
+            <label className="form-label" htmlFor="fe">
+              Email
+            </label>
+            <input id="fe" type="email" autoComplete="username" className="form-control" placeholder="nama@perusahaan.co.id" value={email} onChange={(e) => setEmail(e.target.value)} required />
+          </div>
+          <button className="btn btn-primary" style={{ minHeight: 48 }} disabled={busy}>
+            {busy ? "Mengirim…" : "Kirim Tautan"}
+          </button>
+          <Link to="/masuk" className="small fw-semibold">
+            ← Kembali ke halaman masuk
+          </Link>
+        </form>
+      )}
+    </Shell>
+  );
+}
+
+/** Buat kata sandi baru dari tautan email (token sekali pakai, 30 menit). */
+export function ResetSandi() {
+  const [params] = useSearchParams();
+  const token = params.get("token") || "";
+  const nav = useNavigate();
+  const [state, setState] = useState({ loading: true, email: "", invalid: "" });
+  const [f, setF] = useState({ new_password: "", confirm: "" });
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!/^[a-f0-9]{64}$/.test(token)) {
+      setState({ loading: false, email: "", invalid: "Tautan tidak lengkap. Buka tautan langsung dari email, atau minta tautan baru." });
+      return;
+    }
+    api
+      .get(`/auth/reset-password/${token}`)
+      .then((r) => setState({ loading: false, email: r.data.email, invalid: "" }))
+      .catch((ex) => setState({ loading: false, email: "", invalid: errMsg(ex) }));
+  }, [token]);
+  const submit = async (e) => {
+    e.preventDefault();
+    setErr("");
+    if (f.new_password !== f.confirm) return setErr("Konfirmasi kata sandi baru tidak sama.");
+    setBusy(true);
+    try {
+      await api.post("/auth/reset-password", { token, new_password: f.new_password });
+      localStorage.removeItem("silapp_token");
+      localStorage.removeItem("silapp_user");
+      nav("/masuk", { replace: true, state: { notice: "Kata sandi baru tersimpan. Silakan masuk." } });
+    } catch (ex) {
+      setErr(errMsg(ex));
+    } finally {
+      setBusy(false);
+    }
+    return null;
+  };
+  if (state.loading) return <Shell title="Buat Kata Sandi Baru"><p className="text-muted2 mb-0">Memeriksa tautan…</p></Shell>;
+  if (state.invalid) {
+    return (
+      <Shell title="Tautan Tidak Berlaku">
+        <div className="alert alert-warning py-2 mb-0">{state.invalid}</div>
+        <Link to="/lupa-sandi" className="btn btn-primary" style={{ minHeight: 48 }}>
+          Minta Tautan Baru
+        </Link>
+      </Shell>
+    );
+  }
+  return (
+    <Shell title="Buat Kata Sandi Baru">
+      <form onSubmit={submit} className="d-flex flex-column gap-3">
+        <p className="text-muted2 mb-0">
+          Untuk akun <b className="text-body">{state.email}</b>. Setelah disimpan, semua perangkat yang sedang masuk akan keluar.
+        </p>
+        {err && <div className="alert alert-danger py-2 mb-0">{err}</div>}
+        <input type="email" autoComplete="username" value={state.email} readOnly hidden />
+        <div>
+          <label className="form-label" htmlFor="rn">
+            Kata Sandi Baru
+          </label>
+          <input id="rn" type="password" autoComplete="new-password" minLength={8} maxLength={72} className="form-control" value={f.new_password} onChange={(e) => setF({ ...f, new_password: e.target.value })} required />
+          <PwChecks pw={f.new_password} confirm={f.confirm} />
+        </div>
+        <div>
+          <label className="form-label" htmlFor="rc">
+            Ulangi Kata Sandi Baru
+          </label>
+          <input id="rc" type="password" autoComplete="new-password" minLength={8} maxLength={72} className="form-control" value={f.confirm} onChange={(e) => setF({ ...f, confirm: e.target.value })} required />
+        </div>
+        <button className="btn btn-primary" style={{ minHeight: 48 }} disabled={busy}>
+          {busy ? "Menyimpan…" : "Simpan Kata Sandi"}
         </button>
       </form>
     </Shell>
