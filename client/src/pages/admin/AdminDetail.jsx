@@ -4,7 +4,7 @@ import { useParams } from 'react-router-dom';
 import api, { errMsg, download } from '../../api';
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import { useAuth } from '../../AuthContext';
-import { Loading, useToast, fmtDate, fmtDateTime, Sheet, Menu, FileDrop, todayYmd, addMonths, MAX_FILE_MB, useConfirm } from '../../components/ui';
+import { Loading, useToast, fmtDate, fmtDateTime, Sheet, Menu, FileDrop, todayYmd, addMonths, MAX_FILE_MB, useConfirm, rupiah } from '../../components/ui';
 import ApplicationView from '../../components/ApplicationView';
 import { docWord } from '../../lib/constants';
 import InvoiceForm from './detail/InvoiceForm';
@@ -12,6 +12,10 @@ import FindingsAdd from './detail/FindingsAdd';
 import FindingReview from './detail/FindingReview';
 import LabInfoForm from './detail/LabInfoForm';
 import SampleCodeForm from './detail/SampleCodeForm';
+import OfferForm from './detail/OfferForm';
+import BillingForm from './detail/BillingForm';
+import { peekLocalDraft, dropLocalDraft } from '../../hooks/useLocalDraft';
+import { schemeLabel } from '../../components/PaymentPanels';
 
 const ACT = {
   setujui: { icon: 'check2-circle', ok: 'Ya, Setujui' },
@@ -36,24 +40,28 @@ export default function AdminDetail() {
   const [payNote, setPayNote] = useState('');
   const [review, setReview] = useState(null);
   const [invOpen, setInvOpen] = useState(false);
+  const [offerOpen, setOfferOpen] = useState(false);
+  const [billOpen, setBillOpen] = useState(false);
+  const [billNote, setBillNote] = useState({ bayar: '', potong: '' });
   const [tab, setTab] = useState('ringkasan');
   const load = useCallback(() => api.get(`/admin/applications/${id}`).then((r) => setApp(r.data)).catch((e) => setErr(errMsg(e))), [id]);
   useEffect(() => { load(); }, [load]);
   // perbarui otomatis saat pelanggan membayar/menanggapi (notifikasi masuk) — dijeda selama pop-up terbuka
-  useLiveRefresh(load, `/admin/pengajuan/${id}`, !mode && !invOpen && !review);
+  useLiveRefresh(load, `/admin/pengajuan/${id}`, !mode && !invOpen && !review && !offerOpen && !billOpen);
   if (err) return <div className="alert alert-danger">{err}</div>;
   if (!app) return <Loading />;
 
   const st = app.current_step;
   const open = ['aktif', 'aksi'].includes(app.status);
   const isSA = user.role === 'superadmin';
-  const payBlocked = st.is_payment_step && app.payment_status !== 'terverifikasi';
+  const payBlocked = st.is_payment_step && !['terverifikasi', 'tunda'].includes(app.payment_status);
+  const billing = st.is_billing_step && open ? app.billing : null;
   const paramsOpen = app.parameters.some((p) => p.status !== 'selesai') && st.code === 'LAB-04';
   // alur Tipe 1b: tanpa audit/temuan dan tanpa tahap Tindakan Perbaikan
   const is1B = app.flow === '1B';
   const findingsOpen = !is1B && st.code === 'ST-07' && app.open_findings > 0;
   const blocked = payBlocked || paramsOpen || findingsOpen;
-  const blockReason = payBlocked ? (app.payment_status === 'menunggu' ? 'Periksa dan verifikasi bukti bayar terlebih dahulu.' : 'Terbitkan proforma invoice dan tunggu bukti bayar pelanggan.') : paramsOpen ? 'Masih ada parameter yang belum selesai.' : findingsOpen ? `Masih ada ${app.open_findings} temuan mayor/minor terbuka.` : '';
+  const blockReason = payBlocked ? (app.payment_status === 'menunggu' ? 'Periksa dan verifikasi bukti bayar terlebih dahulu.' : !app.payment_scheme ? 'Atur penawaran & kontrak, lalu terbitkan proforma invoice.' : 'Terbitkan proforma invoice dan tunggu bukti bayar pelanggan.') : paramsOpen ? 'Masih ada parameter yang belum selesai.' : findingsOpen ? `Masih ada ${app.open_findings} temuan mayor/minor terbuka.` : '';
   const findingStage = app.service_code === 'SP' && !is1B && ['ST-05', 'ST-06', 'ST-07'].includes(st.code) && open;
   const dw = docWord(app.service_code);
   const curIdx = app.steps.findIndex((s) => ['current', 'action'].includes(s.state));
@@ -65,6 +73,10 @@ export default function AdminDetail() {
   // 409 = tahap sudah diubah pengguna lain: tutup pop-up dan muat ulang data terbaru
   const fail = (e) => { toast(errMsg(e), 'danger'); if (e?.response?.status === 409) { setMode(null); setInvOpen(false); load(); } };
   const reset = () => { setF(blank()); setCertFile(null); setFiles([]); };
+  // catatan aksi tersimpan otomatis di browser per pengajuan & jenis aksi, sampai berhasil dikirim
+  const noteKey = (m) => `silapp_admin_catatan_${id}_${m}`;
+  const openMode = (m) => { setF({ ...blank(), note: peekLocalDraft(noteKey(m), '') || '' }); setMode(m); };
+  const changeNote = (v) => { setF({ ...f, note: v }); try { localStorage.setItem(noteKey(mode), JSON.stringify(v)); } catch { /* abaikan */ } };
   // sertifikat Sertifikasi Produk punya masa berlaku; LHU & sertifikat kalibrasi tidak
   const needExpiry = st.is_certificate_step && app.service_code === 'SP';
   const act = async () => {
@@ -88,6 +100,7 @@ export default function AdminDetail() {
     setBusy(true);
     try {
       const r = await api.post(`/admin/applications/${id}/action`, fd);
+      dropLocalDraft(noteKey(action));
       setApp(r.data); setMode(null); reset();
       toast({ setujui: 'Tahap disetujui.', minta_tindakan: 'Status menjadi Action Required. Email dikirim ke pelanggan.', abaikan: 'Catatan/lampiran terkirim, status tidak berubah.', tolak: 'Pengajuan ditutup.' }[action]);
     } catch (e) { fail(e); } finally { setBusy(false); }
@@ -106,6 +119,22 @@ export default function AdminDetail() {
     if (!ok) return null;
     try { setApp((await api.post(`/admin/applications/${id}/payment/verify`, { valid, note: payNote, step: st.order })).data); setPayNote(''); toast(valid ? 'Pembayaran terverifikasi.' : 'Pelanggan diminta mengunggah ulang bukti bayar.'); } catch (e) { fail(e); }
   };
+  // tahap akhir: setujui / tolak bukti bayar pelunasan dan bukti potong
+  const verifyBill = async (kind, valid) => {
+    const label = kind === 'bayar' ? 'Bukti Bayar' : 'Bukti Potong';
+    if (!valid && !billNote[kind].trim()) return toast(`Isi alasan ${label.toLowerCase()} ditolak.`, 'danger');
+    const ok = await confirm(valid
+      ? { title: `Setujui ${label}?`, body: kind === 'bayar' ? `Pelunasan tercatat diterima dan pelanggan dapat mengunduh ${dw}.` : 'Bukti potong PPh 23 tercatat lengkap.', ok: 'Ya, Setujui', icon: 'patch-check' }
+      : { title: `Tolak ${label}?`, body: 'Pelanggan diminta mengunggah ulang dengan alasan yang Anda tulis.', ok: 'Ya, Tolak', danger: true, icon: 'x-circle' });
+    if (!ok) return null;
+    try {
+      const r = await api.post(`/admin/applications/${id}/billing/${kind}/verify`, { step: st.order, valid, note: billNote[kind] });
+      setApp(r.data); setBillNote({ ...billNote, [kind]: '' });
+      toast(r.data.status === 'selesai' ? 'Semua kelengkapan disetujui. Pengajuan selesai.' : valid ? `${label} disetujui.` : 'Pelanggan diminta mengunggah ulang.');
+    } catch (e) { fail(e); }
+    return null;
+  };
+  const billFile = (file) => download(`/admin/applications/${id}/billing/${file}`, `${file}-${app.application_no}`).catch((e) => toast(errMsg(e), 'danger'));
   const zip = async () => {
     try { await download(`/admin/applications/${id}/documents-zip`, `berkas-${app.application_no}.zip`); await load(); toast('Semua berkas diunduh.'); } catch (e) { toast(errMsg(e), 'danger'); }
   };
@@ -123,17 +152,19 @@ export default function AdminDetail() {
   /* --- tombol aksi di kepala halaman --- */
   const more = (
     <Menu items={[
-      { label: 'Kirim Catatan / Lampiran', icon: 'chat-left-text', onClick: () => setMode('abaikan'), hidden: !open },
+      { label: 'Kirim Catatan / Lampiran', icon: 'chat-left-text', onClick: () => openMode('abaikan'), hidden: !open },
       { label: 'Unduh Semua Berkas (ZIP)', icon: 'file-zip', onClick: zip, hidden: !isSA || !hasFiles },
       { label: `Unduh ${dw}`, icon: 'download', onClick: () => download(`/admin/applications/${id}/certificate`, `${app.certificate.certificate_no}.pdf`), hidden: !app.certificate?.has_file },
-      { label: 'Tolak & Tutup Pengajuan', icon: 'x-octagon', onClick: () => setMode('tolak'), danger: true, hidden: !open },
+      { label: 'Tolak & Tutup Pengajuan', icon: 'x-octagon', onClick: () => openMode('tolak'), danger: true, hidden: !open || st.is_billing_step },
     ]} />
   );
   const headerActions = open ? (
     <>
       {more}
-      <button className="btn btn-outline-secondary" disabled={busy} onClick={() => setMode('minta_tindakan')}>Minta Tindakan</button>
-      <span title={blocked ? blockReason : undefined}><button className="btn btn-primary" disabled={busy || blocked} onClick={() => setMode('setujui')}>{st.is_certificate_step ? `Setujui & terbitkan` : `Setujui ${st.code}`}</button></span>
+      <button className="btn btn-outline-secondary" disabled={busy} onClick={() => openMode('minta_tindakan')}>Minta Tindakan</button>
+      {st.is_billing_step
+        ? <button className="btn btn-primary" disabled={busy} onClick={() => setBillOpen(true)}>{app.billing?.sent ? 'Perbarui Invoice & Faktur' : 'Unggah Invoice & Faktur'}</button>
+        : <span title={blocked ? blockReason : undefined}><button className="btn btn-primary" disabled={busy || blocked} onClick={() => openMode('setujui')}>{st.is_certificate_step ? `Setujui & terbitkan` : `Setujui ${st.code}`}</button></span>}
     </>
   ) : more;
 
@@ -152,12 +183,44 @@ export default function AdminDetail() {
       <button className="btn btn-sm btn-primary mt-2" onClick={() => setReview(x)}>Tinjau Bukti</button>
     </div>,
   ));
-  if (open && st.is_payment_step && ['belum', 'invoice'].includes(app.payment_status)) items.push(
-    <div key="inv" className="decision-item">
-      <div>{app.payment_status === 'belum' ? 'Proforma invoice belum diterbitkan.' : `Proforma invoice terbit, menunggu pelanggan membayar${app.payment?.due_date ? ` (jatuh tempo ${fmtDate(app.payment.due_date)})` : ''}.`}</div>
-      <button className={`btn btn-sm mt-2 ${app.payment_status === 'belum' ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setInvOpen(true)}>{app.payment_status === 'belum' ? 'Terbitkan Proforma Invoice' : 'Perbarui Proforma Invoice'}</button>
+  if (open && st.is_payment_step && !app.payment_scheme && app.payment_status === 'belum') items.push(
+    <div key="offer" className="decision-item">
+      <div>Tentukan skema pembayaran (Full di Awal, 50 : 50, atau Full di Akhir) dan unggah persetujuan penawaran / kontrak dengan pelanggan.</div>
+      <button className="btn btn-sm mt-2 btn-primary" onClick={() => setOfferOpen(true)}>Atur Penawaran &amp; Kontrak</button>
     </div>,
   );
+  if (open && st.is_payment_step && app.payment_scheme && ['belum', 'invoice', 'tunda'].includes(app.payment_status)) items.push(
+    <div key="inv" className="decision-item">
+      <div>Skema <b>{schemeLabel(app.payment_scheme)}</b>. {app.payment_status === 'belum' ? 'Proforma invoice belum diterbitkan.'
+        : app.payment_status === 'tunda' ? <>Proforma invoice terbit. Tidak ada pembayaran di tahap ini; setujui {st.code} untuk melanjutkan.</>
+          : `Proforma invoice terbit, menunggu pelanggan membayar${app.payment_scheme === '5050' ? ' DP 50%' : ''}${app.payment?.due_date ? ` (jatuh tempo ${fmtDate(app.payment.due_date)})` : ''}.`}</div>
+      <div className="d-flex gap-2 flex-wrap mt-2">
+        <button className={`btn btn-sm ${app.payment_status === 'belum' ? 'btn-primary' : 'btn-outline-secondary'}`} onClick={() => setInvOpen(true)}>{app.payment_status === 'belum' ? 'Terbitkan Proforma Invoice' : 'Perbarui Proforma Invoice'}</button>
+        <button className="btn btn-sm btn-outline-secondary" onClick={() => setOfferOpen(true)}>Ubah Skema / Kontrak</button>
+      </div>
+    </div>,
+  );
+  if (billing && !billing.sent) items.push(
+    <div key="bill" className="decision-item">
+      <div>{dw[0].toUpperCase()}{dw.slice(1)} sudah terbit. Unggah invoice dan faktur pajak untuk pelanggan{billing.amount_due > 0 ? `, sisa tagihan ${rupiah(billing.amount_due)}` : ''}.</div>
+      <button className="btn btn-sm mt-2 btn-primary" onClick={() => setBillOpen(true)}>Unggah Invoice &amp; Faktur</button>
+    </div>,
+  );
+  if (billing?.sent) {
+    [['bayar', 'pay', 'Bukti bayar pelunasan'], ['potong', 'cut', 'Bukti potong PPh 23']].forEach(([kind, col, label]) => {
+      if (billing[col].status !== 'menunggu') return;
+      items.push(
+        <div key={`bill-${kind}`} className="decision-item">
+          <div>{label} diunggah pelanggan.</div>
+          <button className="btn btn-link btn-sm p-0 mt-1" style={{ minHeight: 0 }} onClick={() => billFile(kind)}><i className="bi bi-eye me-1" />Lihat {label}</button>
+          <input className="form-control form-control-sm mt-2" placeholder="Alasan jika ditolak" aria-label={`Catatan ${label}`} value={billNote[kind]} onChange={(e) => setBillNote({ ...billNote, [kind]: e.target.value })} />
+          <div className="d-flex gap-2 mt-2"><button className="btn btn-sm btn-primary" onClick={() => verifyBill(kind, true)}>Setujui</button><button className="btn btn-sm btn-outline-secondary" onClick={() => verifyBill(kind, false)}>Tolak</button></div>
+        </div>,
+      );
+    });
+    const waiting = [['pay', 'bukti bayar pelunasan'], ['cut', 'bukti potong PPh 23']].filter(([c]) => ['belum', 'ditolak'].includes(billing[c].status)).map(([, l]) => l);
+    if (waiting.length) items.push(<div key="bill-wait" className="decision-item info">Menunggu pelanggan mengunggah {waiting.join(' dan ')}. Tahap selesai otomatis setelah semuanya disetujui.</div>);
+  }
   if (open && app.payment_status === 'menunggu') items.push(
     <div key="pay" className="decision-item">
       <div>Pelanggan mengunggah bukti bayar.</div>
@@ -175,6 +238,7 @@ export default function AdminDetail() {
   if (app.is_package && open && ['ST-01', 'ST-02'].includes(st.code)) items.push(<div key="pkg" className="decision-item info">Paket LSPro + Lab: unggah <b>surat permohonan</b> lewat "Lainnya → Kirim catatan / lampiran" dengan nama dokumen "Surat permohonan".</div>);
   if (open && blocked && !items.length) items.push(<div key="blk" className="decision-item info">{blockReason}</div>);
   if (!open && app.status === 'selesai') items.push(<div key="done" className="decision-item info">Pengajuan selesai. Survei kepuasan: <b>{app.survey_done ? 'sudah diisi' : 'belum diisi pelanggan'}</b>.</div>);
+  if (billing && !app.survey_done) items.push(<div key="sv" className="decision-item info">Survei kepuasan: <b>belum diisi pelanggan</b>.</div>);
   const decision = items.length ? {
     title: open ? 'Perlu Keputusan Anda' : 'Status',
     body: <div className="d-flex flex-column gap-2">{items}<div className="small text-muted2 mt-1">PIC tercatat: <b>{isSA ? 'Super Admin PSU' : `${user.name} · ${user.jabatan}`}</b></div></div>,
@@ -191,6 +255,9 @@ export default function AdminDetail() {
         onDownloadDoc={(d) => download(`/admin/applications/${id}/documents/${d.id}`, d.original_name)}
         onDownloadInvoice={() => download(`/admin/applications/${id}/invoice`, `Proforma-Invoice-${app.payment.invoice_no.replace(/\//g, '-')}.pdf`)}
         onDownloadProof={() => download(`/admin/applications/${id}/payment-proof`, `bukti-bayar-${app.application_no}`)}
+        onOfferEdit={open && st.is_payment_step && ['belum', 'invoice', 'tunda'].includes(app.payment_status) ? () => setOfferOpen(true) : undefined}
+        onBillingEdit={billing ? () => setBillOpen(true) : undefined}
+        onBillingDownload={billFile}
         findingActions={open ? (fd) => (fd.status === 'ditutup' ? null : fd.category === 'observasi'
           ? <button className="btn btn-sm btn-outline-secondary" onClick={() => setFinding(fd, 'tutup')}>Tutup</button>
           : <button className="btn btn-sm btn-outline-secondary" onClick={() => setReview(fd)}>Tinjau</button>) : undefined}
@@ -226,7 +293,7 @@ export default function AdminDetail() {
           {mode === 'minta_tindakan' && st.code === 'ST-06' && !is1B && <div className="small text-muted2">Hasil uji tidak sesuai? Minta tindakan akan memindahkan pengajuan ke ST-07.</div>}
           <div>
             <label className="form-label" htmlFor="an">{mode === 'tolak' ? 'Alasan Penolakan' : mode === 'minta_tindakan' ? 'Tindakan yang Diminta dari Pelanggan' : 'Catatan'} {['setujui', 'abaikan'].includes(mode) && <span className="fw-normal text-muted2">(opsional)</span>}</label>
-            <textarea id="an" className="form-control" rows={3} value={f.note} onChange={(e) => setF({ ...f, note: e.target.value })} placeholder={mode === 'minta_tindakan' ? 'Contoh: Lengkapi data teknis produk dan foto label.' : 'Contoh: Sampel diterima dalam kondisi baik.'} />
+            <textarea id="an" className="form-control" rows={3} value={f.note} onChange={(e) => changeNote(e.target.value)} placeholder={mode === 'minta_tindakan' ? 'Contoh: Lengkapi data teknis produk dan foto label.' : 'Contoh: Sampel diterima dalam kondisi baik.'} />
           </div>
           {mode !== 'tolak' && (
             <div>
@@ -241,6 +308,12 @@ export default function AdminDetail() {
 
       <Sheet open={invOpen} onClose={() => setInvOpen(false)} wide icon="receipt" title={app.payment_status === 'belum' ? 'Terbitkan Proforma Invoice' : 'Perbarui Proforma Invoice'} sub={`${app.application_no} · ${app.company_name}`}>
         <InvoiceForm key={app.payment?.created_at || 'new'} app={app} onSaved={(d) => { setApp(d); setInvOpen(false); }} onStale={() => { setInvOpen(false); load(); }} />
+      </Sheet>
+      <Sheet open={offerOpen} onClose={() => setOfferOpen(false)} wide icon="file-earmark-check" title="Penawaran & Kontrak" sub={`${app.application_no} · ${app.company_name}`}>
+        {offerOpen && <OfferForm app={app} onSaved={(d) => { setApp(d); setOfferOpen(false); }} onCancel={() => setOfferOpen(false)} onStale={() => { setOfferOpen(false); load(); }} />}
+      </Sheet>
+      <Sheet open={billOpen} onClose={() => setBillOpen(false)} wide icon="receipt-cutoff" title="Invoice & Faktur" sub={`${app.application_no} · ${app.company_name}`}>
+        {billOpen && app.billing && <BillingForm app={app} onSaved={(d) => { setApp(d); setBillOpen(false); }} onCancel={() => setBillOpen(false)} onStale={() => { setBillOpen(false); load(); }} />}
       </Sheet>
       <FindingReview f={review} app={app} onChange={setApp} onClose={() => setReview(null)} onDownloadDoc={(d) => download(`/admin/applications/${id}/documents/${d.id}`, d.original_name)} />
     </>

@@ -4,7 +4,7 @@
  * sesuai ketentuan kerahasiaan di ketiga dokumen rancangan sistem tracking.
  */
 const { q, one } = require('../config/db');
-const { stepOf, condition, isSkipped, allDocsDownloaded } = require('./workflow');
+const { stepOf, condition, isSkipped, allDocsDownloaded, workDone, finalPaid, billing } = require('./workflow');
 const { optionLabel, taxes } = require('../utils/pricing');
 const { certState } = require('../utils/certificate');
 
@@ -27,7 +27,10 @@ const ymdJkt = (d) => (typeof d === 'string' ? d.slice(0, 10) : new Intl.DateTim
  */
 function slaOf(app, st, cond) {
   if (st.sla_days == null || !app.step_since || app.status !== 'aktif') return null;
-  const psu = PSU_TURN.includes(cond) || (cond === 'Waiting for Payment' && app.payment_status === 'menunggu');
+  // tahap akhir: giliran PSU saat invoice belum dikirim atau ada bukti yang menunggu verifikasi
+  const psu = st.is_billing_step
+    ? !app.billing_sent || app.billing_pay === 'menunggu' || app.billing_cut === 'menunggu'
+    : PSU_TURN.includes(cond) || (cond === 'Waiting for Payment' && app.payment_status === 'menunggu');
   if (!psu) return null;
   const elapsed = Math.round((new Date(`${ymdJkt(new Date())}T00:00:00Z`) - new Date(`${ymdJkt(app.step_since)}T00:00:00Z`)) / DAY);
   const days = +st.sla_days;
@@ -41,9 +44,12 @@ function summary(app) {
     id: app.id, application_no: app.application_no, tracking_code: app.tracking_code,
     service_code: app.service_code, service_name: app.service_name, product_label: app.product_label,
     company_name: app.company_name, status: app.status, condition: cond, sla: slaOf(app, st, cond),
-    current_step: { order: app.current_step_order, code: st.status_code, name: st.name, index: app.steps.findIndex((x) => x.step_order === app.current_step_order) + 1, total: app.steps.length, is_payment_step: !!st.is_payment_step },
+    current_step: { order: app.current_step_order, code: st.status_code, name: st.name, index: app.steps.findIndex((x) => x.step_order === app.current_step_order) + 1, total: app.steps.length, is_payment_step: !!st.is_payment_step, is_billing_step: !!st.is_billing_step },
     progress: progress(app),
-    payment_status: app.payment_status, open_findings: +app.open_findings || 0, is_package: !!app.is_package, flow: app.flow || '',
+    work_done: workDone(app),
+    // tahap akhir Invoice & Faktur: sent = invoice sudah dikirim; pay/cut = status bukti bayar & bukti potong
+    billing: app.billing_pay ? { sent: !!app.billing_sent, pay: app.billing_pay, cut: app.billing_cut } : null,
+    payment_status: app.payment_status, payment_scheme: app.payment_scheme || null, open_findings: +app.open_findings || 0, is_package: !!app.is_package, flow: app.flow || '',
     created_at: app.created_at, updated_at: app.updated_at,
   };
 }
@@ -54,9 +60,11 @@ async function timeline(app) {
   return app.steps.map((s) => {
     let state = 'todo';
     if (isSkipped(app, s) && (s.step_order < app.current_step_order || app.service_code === 'KAL')) state = 'skipped';
+    // pengajuan yang selesai sebelum ada tahap Invoice & Faktur: tahap itu dilewati
+    else if (s.is_billing_step && app.status === 'selesai' && !app.billing_pay) state = 'skipped';
     else if (app.status === 'selesai' || s.step_order < app.current_step_order) state = 'done';
     else if (s.step_order === app.current_step_order) state = app.status === 'aksi' ? 'action' : ['ditolak', 'batal'].includes(app.status) ? 'closed' : 'current';
-    return { order: s.step_order, code: s.status_code, name: s.name, pct: s.progress_pct, optional: !!s.is_optional, pay: !!s.is_payment_step, state, started_at: started[s.step_order] || null };
+    return { order: s.step_order, code: s.status_code, name: s.name, pct: s.progress_pct, optional: !!s.is_optional, pay: !!s.is_payment_step, bill: !!s.is_billing_step, state, started_at: started[s.step_order] || null };
   });
 }
 
@@ -77,11 +85,14 @@ async function detail(app, viewer) {
   const base = { ...summary(app), steps };
   if (!admin) delete base.sla; // target SLA hanya untuk internal PSU
   base.last_update = lastLog ? lastLog.created_at : app.created_at;
-  base.customer_action_needed = app.status === 'aksi' || +app.open_findings > 0 || (stepOf(app).is_payment_step && app.payment_status === 'invoice' && app.status === 'aktif');
+  const billWait = (s) => ['belum', 'ditolak'].includes(s);
+  base.customer_action_needed = app.status === 'aksi' || +app.open_findings > 0 || (stepOf(app).is_payment_step && app.payment_status === 'invoice' && app.status === 'aktif')
+    || (stepOf(app).is_billing_step && app.status === 'aktif' && !!app.billing_sent && (billWait(app.billing_pay) || billWait(app.billing_cut)));
   base.service_est = app.service_est || null;
   if (viewer === 'public') {
     // lacak tanpa login: hanya progres, tanpa data perusahaan/produk
     delete base.company_name; delete base.product_label; delete base.id; delete base.payment_status; delete base.open_findings; delete base.is_package;
+    delete base.payment_scheme; delete base.billing;
     return base;
   }
 
@@ -119,6 +130,8 @@ async function detail(app, viewer) {
     const t = pay.dpp_lain == null ? taxes(pay.dpp ?? pay.amount) : { price: +pay.dpp, dppLain: +pay.dpp_lain, ppn: +pay.ppn, total: +pay.total, pph23: +pay.pph23 };
     return {
       invoice_no: pay.invoice_no, price: t.price, dpp_lain: t.dppLain, ppn: t.ppn, total: t.total, pph23: t.pph23 || 0, amount: t.total - (t.pph23 || 0),
+      // dibayar di tahap Penawaran & Kontrak sesuai skema (proforma lama: seluruhnya)
+      due_now: pay.due_now == null ? t.total - (t.pph23 || 0) : +pay.due_now, with_pph23: !!pay.with_pph23,
       items: pay.items ? JSON.parse(pay.items) : [], due_date: pay.due_date, note: pay.note, status: pay.status,
       has_proof: !!pay.proof_path, created_at: pay.created_at, paid_at: pay.paid_at, verified_at: pay.verified_at,
     };
@@ -138,9 +151,13 @@ async function detail(app, viewer) {
     const { id, ...c } = cert;
     // alasan ditangguhkan/dicabut ikut ditampilkan; pelanggan tidak bisa mengunduh sertifikat yang dicabut
     const note = c.status !== 'aktif' && viewer !== 'public' ? await require('./certificates').statusNote('silapp', id) : null;
-    base.certificate = { ...c, has_file: !!c.has_file, state: certState(c), status_note: note, can_download: c.status !== 'dicabut' || admin };
+    // pelanggan: sertifikat dicabut tidak bisa diunduh; skema 50:50 / Full di Akhir menunggu pelunasan disetujui
+    const locked = c.status === 'dicabut' ? 'dicabut' : !finalPaid(app) ? 'pelunasan' : null;
+    base.certificate = { ...c, has_file: !!c.has_file, state: certState(c), status_note: note, locked: admin ? null : locked, can_download: admin || !locked };
   } else base.certificate = null;
   base.survey_done = !!survey;
+  base.billing = viewer === 'public' ? null : await billing.billingView(app.id);
+  base.contract = viewer === 'public' ? null : base.documents.filter((d) => d.doc_type === 'Persetujuan Penawaran / Kontrak').pop() || null;
   if (admin && survey) {
     survey.answers = await q('SELECT question, score FROM survey_answers WHERE response_id=? ORDER BY id', [survey.id]);
     base.survey = survey;

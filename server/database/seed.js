@@ -28,30 +28,33 @@ const { taxes } = require('../src/utils/pricing');
 const storage = require('../src/utils/storage');
 
 const ST = (c, n, p, o = {}) => ({ c, n, p, ...o });
+const BILL = 'Invoice & Faktur'; // tahap akhir setelah sertifikat/LHU terbit: invoice, faktur pajak, bukti bayar, bukti potong
+const OFFER = 'Penawaran & Kontrak'; // tahap 3: skema pembayaran, kontrak, proforma invoice
 const STEPS = {
   SP: [ST('ST-01', 'Permohonan Diterima', 10), ST('ST-02', 'Verifikasi & Tinjauan Permohonan', 20),
-    ST('ST-03', 'Penawaran, Kontrak & Pembayaran', 30, { pay: 1 }), ST('ST-04', 'Penjadwalan & Penugasan', 40),
+    ST('ST-03', OFFER, 30, { pay: 1 }), ST('ST-04', 'Penjadwalan & Penugasan', 40),
     ST('ST-05', 'Evaluasi/Audit & Sampling', 50), ST('ST-06', 'Pengujian Laboratorium', 60),
     ST('ST-07', 'Tindakan Perbaikan', 70, { opt: 1 }), ST('ST-08', 'Review Hasil Evaluasi', 80),
-    ST('ST-09', 'Keputusan Sertifikasi', 90), ST('ST-10', 'Sertifikat Terbit', 100, { cert: 1 })],
+    ST('ST-09', 'Keputusan Sertifikasi', 90), ST('ST-10', 'Sertifikat Terbit', 95, { cert: 1 }), ST('ST-11', BILL, 98, { bill: 1 })],
   LAB: [ST('LAB-01', 'Permohonan Diterima', 10), ST('LAB-02', 'Sampel Diterima & Diregistrasi', 20),
-    ST('LAB-03', 'Verifikasi, Kontrak & Pembayaran', 35, { pay: 1 }), ST('LAB-04', 'Proses Pengujian', 60),
-    ST('LAB-05', 'Review & Verifikasi Hasil', 80), ST('LAB-06', 'Penyusunan LHU', 95, { cert: 1 }), ST('LAB-07', 'LHU Terbit', 100)],
-  KAL: [ST('KAL-01', 'Permohonan Diterima', 10), ST('KAL-02', 'Verifikasi, Kontrak & Pembayaran', 20, { pay: 1 }),
+    ST('LAB-03', OFFER, 35, { pay: 1 }), ST('LAB-04', 'Proses Pengujian', 60),
+    ST('LAB-05', 'Review & Verifikasi Hasil', 80), ST('LAB-06', 'Penyusunan LHU', 90, { cert: 1 }), ST('LAB-07', 'LHU Terbit', 95),
+    ST('LAB-08', BILL, 98, { bill: 1 })],
+  KAL: [ST('KAL-01', 'Permohonan Diterima', 10), ST('KAL-02', OFFER, 20, { pay: 1 }),
     ST('KAL-03', 'Alat Diterima & Diregistrasi', 30), ST('KAL-04', 'Persiapan Kalibrasi', 40),
     ST('KAL-05', 'Pelaksanaan Kalibrasi', 65), ST('KAL-06', 'Review & Verifikasi Hasil', 80),
-    ST('KAL-07', 'Penerbitan Sertifikat', 95, { cert: 1 }), ST('KAL-08', 'Sertifikat Terbit', 100),
-    ST('KAL-09', 'Pengembalian Alat', 100, { opt: 1 })],
+    ST('KAL-07', 'Penerbitan Sertifikat', 90, { cert: 1 }), ST('KAL-08', 'Sertifikat Terbit', 95),
+    ST('KAL-09', 'Pengembalian Alat', 95, { opt: 1 }), ST('KAL-10', BILL, 98, { bill: 1 })],
   // Sertifikasi Produk skema Tipe 1b: tanpa audit & tindakan perbaikan, review + keputusan digabung
   SP_1B: [ST('ST-01', 'Permohonan Diterima', 10), ST('ST-02', 'Verifikasi & Tinjauan Permohonan', 20),
-    ST('ST-03', 'Penawaran, Kontrak & Pembayaran', 30, { pay: 1 }), ST('ST-04', 'Penjadwalan & Penugasan', 40),
+    ST('ST-03', OFFER, 30, { pay: 1 }), ST('ST-04', 'Penjadwalan & Penugasan', 40),
     ST('ST-05', 'Sampling', 50), ST('ST-06', 'Pengujian Laboratorium', 65),
-    ST('ST-07', 'Review & Keputusan', 85), ST('ST-08', 'Sertifikat Terbit', 100, { cert: 1 })],
+    ST('ST-07', 'Review & Keputusan', 85), ST('ST-08', 'Sertifikat Terbit', 95, { cert: 1 }), ST('ST-09', BILL, 98, { bill: 1 })],
   // Lembaga Sistem Manajemen: seperti SP, tahap 5 tanpa sampling dan tanpa pengujian laboratorium
   LSM: [ST('LSM-01', 'Permohonan Diterima', 10), ST('LSM-02', 'Verifikasi & Tinjauan Permohonan', 20),
-    ST('LSM-03', 'Penawaran, Kontrak & Pembayaran', 30, { pay: 1 }), ST('LSM-04', 'Penjadwalan & Penugasan', 40),
+    ST('LSM-03', OFFER, 30, { pay: 1 }), ST('LSM-04', 'Penjadwalan & Penugasan', 40),
     ST('LSM-05', 'Evaluasi/Audit', 55), ST('LSM-06', 'Tindakan Perbaikan', 70, { opt: 1 }), ST('LSM-07', 'Review Hasil Evaluasi', 80),
-    ST('LSM-08', 'Keputusan Sertifikasi', 90), ST('LSM-09', 'Sertifikat Terbit', 100, { cert: 1 })],
+    ST('LSM-08', 'Keputusan Sertifikasi', 90), ST('LSM-09', 'Sertifikat Terbit', 95, { cert: 1 }), ST('LSM-10', BILL, 98, { bill: 1 })],
 };
 
 const SERVICES = [
@@ -219,8 +222,8 @@ const USERS = [
     for (const [flow, list] of [['', STEPS[s.steps]], ['1B', STEPS[`${s.steps}_1B`]]]) {
       for (const [i, st] of (list || []).entries()) {
         await conn.query(
-          'INSERT INTO service_steps (service_id, step_order, status_code, name, progress_pct, is_optional, is_payment_step, is_certificate_step, flow) VALUES (?,?,?,?,?,?,?,?,?)',
-          [r.insertId, i + 1, st.c, st.n, st.p, st.opt || 0, st.pay || 0, st.cert || 0, flow]);
+          'INSERT INTO service_steps (service_id, step_order, status_code, name, progress_pct, is_optional, is_payment_step, is_certificate_step, is_billing_step, flow) VALUES (?,?,?,?,?,?,?,?,?,?)',
+          [r.insertId, i + 1, st.c, st.n, st.p, st.opt || 0, st.pay || 0, st.cert || 0, st.bill || 0, flow]);
       }
     }
   }

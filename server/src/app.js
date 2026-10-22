@@ -29,7 +29,7 @@ app.use((req, res, next) => {
   res.set({ 'X-Content-Type-Options': 'nosniff', 'X-Frame-Options': 'SAMEORIGIN', 'Referrer-Policy': 'strict-origin-when-cross-origin' });
   next();
 });
-app.use(cors({ origin: process.env.CLIENT_URL || true }));
+app.use(cors({ origin: process.env.CLIENT_URL || true, exposedHeaders: ['X-New-Token'] }));
 app.use(express.json({ limit: '1mb' }));
 
 // Pastikan kolom/tabel baru ada sebelum request pertama dilayani (sekali per proses / instance fungsi),

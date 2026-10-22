@@ -6,9 +6,14 @@
  * pelanggan saat pengajuan dan hanya ditampilkan di sini.
  * Semua harga belum termasuk PPN. Pajak: DPP nilai lain = 11/12 × harga, PPN 12% × DPP nilai lain, PPh 23 = 2% × harga (opsional).
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import api, { errMsg } from '../../../api';
 import { useToast, useConfirm, rupiah, Loading, MoneyInput, taxes, moneyIn, onlyDigits } from '../../../components/ui';
+import { peekLocalDraft, dropLocalDraft } from '../../../hooks/useLocalDraft';
+import { schemeLabel } from '../../../components/PaymentPanels';
+
+/** Dibayar di tahap Penawaran & Kontrak (sama dengan perhitungan server). */
+const dueNow = (scheme, grand) => (scheme === 'akhir' ? 0 : scheme === '5050' ? Math.round(grand / 2) : grand);
 
 const EMPTY_ROW = { label: '', method: '', qty: '1', unit: '', price: '' };
 
@@ -22,6 +27,10 @@ export default function InvoiceForm({ app, onSaved, onStale }) {
   const [cp, setCp] = useState({});
   const [f, setF] = useState({ due_date: '', note: '', with_pph23: true });
   const [busy, setBusy] = useState(false);
+  // isian yang belum dikirim tersimpan otomatis di browser (per pengajuan & per proforma)
+  const draftKey = `silapp_proforma_${app.id}`;
+  const base = prev?.created_at || 'baru';
+  const initial = useRef({ ready: false, snap: null });
 
   useEffect(() => {
     api.get(`/admin/applications/${app.id}/invoice-draft`).then((r) => {
@@ -33,8 +42,24 @@ export default function InvoiceForm({ app, onSaved, onStale }) {
       setItems(isLab ? prevExtra.map(asRow) : (prev ? prev.items : x.items).map(asRow));
       setCp(Object.fromEntries(x.lab_lines.filter((l) => l.custom).map((l) => [l.key, moneyIn(l.price)])));
       setF({ due_date: prev?.due_date || x.due_date, note: prev?.note || '', with_pph23: prev ? prev.pph23 > 0 : x.with_pph23 });
+      const saved = peekLocalDraft(draftKey, null);
+      if (saved && saved.base === base) {
+        setItems(saved.items); setCp(saved.cp); setF(saved.f);
+        toast('Isian proforma yang belum dikirim dipulihkan.');
+      }
+      initial.current.ready = true;
     }).catch((e) => toast(errMsg(e), 'danger'));
   }, [app.id]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    const ini = initial.current;
+    if (!d || !ini.ready) return undefined;
+    // nilai awal (dari server / draft yang dipulihkan) tidak perlu disimpan; simpan setelah ada perubahan
+    const now = JSON.stringify({ items, cp, f });
+    if (ini.snap === null) { ini.snap = now; return undefined; }
+    if (now === ini.snap) return undefined;
+    const tm = setTimeout(() => { try { localStorage.setItem(draftKey, JSON.stringify({ base, items, cp, f })); } catch { /* abaikan */ } }, 400);
+    return () => clearTimeout(tm);
+  }, [d, items, cp, f]); // eslint-disable-line react-hooks/exhaustive-deps
   if (!d) return <Loading />;
 
   const lineAmt = (i) => Math.max(1, Math.round(+i.qty || 1)) * Math.round(+i.price || 0);
@@ -48,12 +73,13 @@ export default function InvoiceForm({ app, onSaved, onStale }) {
   const save = async (e) => {
     e.preventDefault();
     const ok = await confirm({ title: prev ? 'Simpan Perubahan Proforma Invoice?' : 'Terbitkan Proforma Invoice?', icon: 'receipt', ok: prev ? 'Ya, Simpan' : 'Ya, Terbitkan',
-      body: <>Total yang ditagih <b>{rupiah(t.grand)}</b>. Pelanggan menerima email dan dapat mengunduh proforma invoice.</> });
+      body: <>Grand total <b>{rupiah(t.grand)}</b>{app.payment_scheme && <>, skema <b>{schemeLabel(app.payment_scheme)}</b>: dibayar sekarang <b>{rupiah(dueNow(app.payment_scheme, t.grand))}</b></>}. Pelanggan menerima email dan dapat mengunduh proforma invoice.</> });
     if (!ok) return;
     setBusy(true);
     try {
       const body = { step: app.current_step.order, with_pph23: f.with_pph23, due_date: f.due_date, note: f.note, items, ...(isLab && { custom_prices: cp }) };
       onSaved((await api.post(`/admin/applications/${app.id}/invoice`, body)).data);
+      dropLocalDraft(draftKey);
       toast(prev ? 'Proforma invoice diperbarui.' : 'Proforma invoice terbit dan dikirim ke pelanggan.');
     } catch (ex) { toast(errMsg(ex), 'danger'); if (ex?.response?.status === 409) onStale?.(); } finally { setBusy(false); }
   };
@@ -136,7 +162,12 @@ export default function InvoiceForm({ app, onSaved, onStale }) {
           <tr><td className="text-muted2">PPN 12%</td><td className="text-end num">{rupiah(t.ppn)}</td></tr>
           <tr><td className="text-muted2">Total</td><td className="text-end num">{rupiah(t.total)}</td></tr>
           {f.with_pph23 && <tr><td className="text-muted2">PPh 23 (dipotong)</td><td className="text-end num">−{rupiah(t.pph23)}</td></tr>}
-          <tr><th>Grand Total (Dibayar Pelanggan)</th><th className="text-end num">{rupiah(t.grand)}</th></tr>
+          <tr><th>Grand Total</th><th className="text-end num">{rupiah(t.grand)}</th></tr>
+          {app.payment_scheme && <>
+            <tr><td className="text-muted2">Skema Pembayaran</td><td className="text-end">{schemeLabel(app.payment_scheme)}</td></tr>
+            <tr><th>Dibayar di Tahap Ini</th><th className="text-end num">{rupiah(dueNow(app.payment_scheme, t.grand))}</th></tr>
+            {app.payment_scheme !== 'full' && <tr><td className="text-muted2">Ditagih setelah sertifikat/LHU terbit</td><td className="text-end num">{rupiah(t.grand - dueNow(app.payment_scheme, t.grand))}</td></tr>}
+          </>}
         </tbody>
       </table>
 

@@ -36,6 +36,19 @@ function context(B, mails) {
       for (const [k, v] of Object.entries(extra)) { if (v instanceof Blob) fd.append(k, v, `${k}.pdf`); else fd.append(k, v); }
       return t.call(token, 'POST', `/admin/applications/${id}/action`, null, fd);
     },
+    /** Tahap Penawaran & Kontrak: atur skema pembayaran + unggah kontrak (wajib sebelum proforma). */
+    offer(token, id, step, scheme = 'full', note = '') {
+      const fd = new FormData(); fd.append('step', step); fd.append('scheme', scheme); fd.append('note', note);
+      fd.append('contract', pdf(), 'kontrak.pdf');
+      return t.call(token, 'POST', `/admin/applications/${id}/offer`, null, fd);
+    },
+    /** Tahap akhir: kirim invoice & faktur pajak (PDF). */
+    billing(token, id, step, { note = '', pph } = {}) {
+      const fd = new FormData(); fd.append('step', step); fd.append('note', note);
+      if (pph !== undefined) fd.append('with_pph23', pph ? '1' : '0');
+      fd.append('invoice', pdf(), 'invoice-akhir.pdf'); fd.append('faktur', pdf(), 'faktur-pajak.pdf');
+      return t.call(token, 'POST', `/admin/applications/${id}/billing`, null, fd);
+    },
     adminApp: async (token, id) => (await t.call(token, 'GET', `/admin/applications/${id}`)).j,
     /** Email simulasi terakhir ke alamat tertentu. */
     lastMail: (to) => [...mails].reverse().find((m) => m.includes(`ke=${to} `)),

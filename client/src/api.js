@@ -66,7 +66,13 @@ const wait = (ms) => new Promise((r) => { setTimeout(r, ms); });
 const RETRY = [502, 503, 504];
 
 api.interceptors.response.use(
-  (r) => { endJob(r.config); return r; },
+  (r) => {
+    endJob(r.config);
+    // sesi diperpanjang otomatis selama aktif: server mengirim token baru lewat header
+    const fresh = r.headers?.['x-new-token'];
+    if (fresh && localStorage.getItem('silapp_token')) localStorage.setItem('silapp_token', fresh);
+    return r;
+  },
   async (err) => {
     endJob(err.config);
     // unduhan (responseType blob) yang ditolak server: ubah isi JSON-nya agar pesan error bisa ditampilkan

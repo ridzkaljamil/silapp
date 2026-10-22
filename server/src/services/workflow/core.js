@@ -11,7 +11,10 @@ const rupiah = (n) => `Rp${Number(n || 0).toLocaleString('id-ID')}`;
 const OPEN_FINDINGS = `(SELECT COUNT(*) FROM findings f WHERE f.application_id=a.id AND f.category<>'observasi' AND f.status<>'ditutup')`;
 /** Sejak kapan tahap ini ditangani PSU: tahap dimulai, atau terakhir kali pelanggan menanggapi / mengunggah bukti bayar. */
 const STEP_SINCE = `(SELECT MAX(l.created_at) FROM status_logs l WHERE l.application_id=a.id AND l.step_order=a.current_step_order
-  AND l.action IN ('buat','mulai','tanggapan','bayar'))`;
+  AND l.action IN ('buat','mulai','tanggapan','bayar','tagihan'))`;
+/** Status tahap akhir Invoice & Faktur (null bila pengajuan belum sampai tahap itu). */
+const BILLING_COLS = `bl.sent_at AS billing_sent, bl.pay_status AS billing_pay, bl.cut_status AS billing_cut`;
+const BILLING_JOIN = 'LEFT JOIN billings bl ON bl.application_id=a.id';
 
 /** Tahapan layanan; flow '1B' = alur khusus skema Tipe 1b (jika layanan memilikinya), selain itu alur utama. */
 async function getSteps(serviceId, flow = '') {
@@ -32,8 +35,8 @@ const is1BFlow = (app) => app.flow === '1B';
 async function loadApp(id) {
   const app = await one(
     `SELECT a.*, s.code AS service_code, s.name AS service_name, s.bidang AS service_bidang, s.est_text AS service_est,
-            u.email AS user_email, u.name AS user_name, u.company_name, ${OPEN_FINDINGS} AS open_findings, ${STEP_SINCE} AS step_since
-       FROM applications a JOIN services s ON s.id=a.service_id JOIN users u ON u.id=a.user_id
+            u.email AS user_email, u.name AS user_name, u.company_name, ${OPEN_FINDINGS} AS open_findings, ${STEP_SINCE} AS step_since, ${BILLING_COLS}
+       FROM applications a JOIN services s ON s.id=a.service_id JOIN users u ON u.id=a.user_id ${BILLING_JOIN}
       WHERE a.id=?`, [id]);
   if (!app) throw httpError(404, 'Pengajuan tidak ditemukan.');
   app.steps = await getSteps(app.service_id, app.flow);
@@ -44,6 +47,13 @@ const picLabel = (u) => (u.role === 'superadmin' ? 'Super Admin PSU' : u.role ==
 const stepOf = (app, order = app.current_step_order) => app.steps.find((s) => s.step_order === order);
 const isLabTesting = (app) => ['KIM', 'FIS', 'MIK'].includes(app.service_code);
 const docWord = (app) => (isLabTesting(app) ? 'LHU' : 'Sertifikat');
+/** Pekerjaan selesai (sertifikat/LHU terbit): status selesai, atau sedang di tahap akhir Invoice & Faktur. */
+const workDone = (app) => app.status === 'selesai' || !!stepOf(app)?.is_billing_step;
+/** Skema pembayaran efektif: pengajuan lama tanpa skema dianggap Full di Awal. */
+const schemeOf = (app) => app.payment_scheme || 'full';
+const SCHEME_LABEL = { full: 'Full di Awal', '5050': '50 : 50', akhir: 'Full di Akhir' };
+/** Bukti bayar akhir sudah beres (atau memang tidak perlu): sertifikat/LHU boleh diunduh pelanggan. */
+const finalPaid = (app) => !app.billing_pay || ['disetujui', 'tidak_perlu'].includes(app.billing_pay);
 
 /** Admin hanya boleh menangani pengajuan di bidangnya; Super Admin semua bidang. */
 function assertCanHandle(user, app) {
@@ -106,6 +116,8 @@ function condition(app) {
   if (app.status === 'batal') return 'Cancelled';
   if (app.status === 'aksi' || app.open_findings > 0) return 'Action Required';
   if (st.is_payment_step && ['invoice', 'menunggu'].includes(app.payment_status)) return 'Waiting for Payment';
+  // tahap akhir: menunggu pelunasan selama bukti bayar belum disetujui
+  if (st.is_billing_step) return app.billing_sent && !finalPaid(app) ? 'Waiting for Payment' : 'On Progress';
   if (app.service_code === 'KAL' && st.status_code === 'KAL-09') return 'Ready for Collection';
   if (app.service_code === 'KAL' && app.location === 'onsite' && ['KAL-04', 'KAL-05'].includes(st.status_code)) return 'On-Site Calibration';
   if (isLabTesting(app) && st.status_code === 'LAB-02') return 'Waiting for Sample';
@@ -120,4 +132,4 @@ async function setStep(app, order, user) {
   await addLog(app, 'mulai', 'Tahap dimulai.', user);
 }
 
-module.exports = { httpError, BLN, tgl, rupiah, OPEN_FINDINGS, STEP_SINCE, getSteps, flowFor, is1BFlow, loadApp, picLabel, stepOf, isLabTesting, docWord, assertCanHandle, assertOpen, assertStep, addLog, saveDocs, notify, isSkipped, condition, setStep };
+module.exports = { httpError, BLN, tgl, rupiah, OPEN_FINDINGS, STEP_SINCE, BILLING_COLS, BILLING_JOIN, workDone, schemeOf, SCHEME_LABEL, finalPaid, getSteps, flowFor, is1BFlow, loadApp, picLabel, stepOf, isLabTesting, docWord, assertCanHandle, assertOpen, assertStep, addLog, saveDocs, notify, isSkipped, condition, setStep };

@@ -4,7 +4,7 @@ const path = require('path');
 const archiver = require('archiver');
 const { q, one } = require('../config/db');
 const { requireAuth, allow } = require('../middleware/auth');
-const { upload } = require('../utils/upload');
+const { upload, makeUpload } = require('../utils/upload');
 const storage = require('../utils/storage');
 const wf = require('../services/workflow');
 const { detail } = require('../services/present');
@@ -25,7 +25,9 @@ async function handledApp(req) {
 
 /** Pengajuan yang menunggu tindakan PSU: baru masuk, bukti/perpanjangan temuan, bukti bayar, invoice belum terbit. */
 const needsPsu = (a) => ['aktif', 'aksi'].includes(a.status) && (a.current_step.code.endsWith('-01') || a.findings_review > 0
-  || a.payment_status === 'menunggu' || (a.payment_status === 'belum' && a.current_step.is_payment_step));
+  || a.payment_status === 'menunggu' || (a.payment_status === 'belum' && a.current_step.is_payment_step)
+  // tahap akhir: invoice & faktur belum dikirim, atau bukti bayar / bukti potong menunggu verifikasi
+  || (a.current_step.is_billing_step && (!a.billing?.sent || a.billing?.pay === 'menunggu' || a.billing?.cut === 'menunggu')));
 
 /** Angka badge menu Antrean. */
 router.get('/counts', async (req, res, next) => {
@@ -37,7 +39,7 @@ async function expiringCerts(u) {
   if (!(u.role === 'superadmin' || u.bidang === 'SP')) return [];
   const rows = await q(`SELECT 'silapp' source, c.id, c.certificate_no, c.expires_at, c.status, a.id application_id, a.application_no, u.company_name factory_name
       FROM certificates c JOIN applications a ON a.id=c.application_id JOIN services s ON s.id=a.service_id JOIN users u ON u.id=a.user_id
-     WHERE s.code='SP' AND a.status='selesai' AND c.status<>'dicabut' AND c.expires_at BETWEEN CURDATE() AND CURDATE() + INTERVAL 90 DAY
+     WHERE s.code='SP' AND (a.status='selesai' OR EXISTS (SELECT 1 FROM billings bx WHERE bx.application_id=a.id)) AND c.status<>'dicabut' AND c.expires_at BETWEEN CURDATE() AND CURDATE() + INTERVAL 90 DAY
     UNION ALL
     SELECT 'lama', id, certificate_no, expires_at, status, NULL, NULL, factory_name FROM legacy_certificates
      WHERE status<>'dicabut' AND expires_at BETWEEN CURDATE() AND CURDATE() + INTERVAL 90 DAY
@@ -134,6 +136,51 @@ router.post('/applications/:id/invoice', async (req, res, next) => {
     await wf.issueInvoice(app, req.user, { items: b.items, customPrices: b.custom_prices || {}, withPph23: !!b.with_pph23, dueDate: b.due_date, note: b.note });
     res.json(await fresh(app));
   } catch (e) { next(e); }
+});
+
+/**
+ * Tahap Penawaran & Kontrak: skema pembayaran + persetujuan penawaran / kontrak.
+ * body (multipart): step, scheme (full | 5050 | akhir), note; file: contract (wajib bila belum pernah diunggah)
+ */
+router.post('/applications/:id/offer', upload.array('contract', 1), async (req, res, next) => {
+  try {
+    const app = await handledApp(req);
+    wf.assertStep(app, req.body.step);
+    await wf.setOffer(app, req.user, { scheme: req.body.scheme, note: String(req.body.note || '').slice(0, 500), files: req.files });
+    res.json(await fresh(app));
+  } catch (e) { next(e); }
+});
+
+/* ---------- tahap akhir Invoice & Faktur ---------- */
+const pdfUpload = makeUpload({ allowed: ['.pdf'], message: 'Invoice dan faktur pajak harus berformat PDF.', prefix: 'tagihan-' });
+
+/** Kirim / perbarui invoice & faktur pajak. multipart: step, note, with_pph23 ("1"/"0"); file: invoice, faktur (PDF) */
+router.post('/applications/:id/billing', pdfUpload.fields([{ name: 'invoice', maxCount: 1 }, { name: 'faktur', maxCount: 1 }]), async (req, res, next) => {
+  try {
+    const app = await handledApp(req);
+    wf.assertStep(app, req.body.step);
+    const pph = req.body.with_pph23;
+    await wf.billing.saveBilling(app, req.user, {
+      invoice: req.files?.invoice?.[0], faktur: req.files?.faktur?.[0], note: req.body.note,
+      withPph23: pph === undefined ? undefined : pph === '1' || pph === 'true' || pph === true,
+    });
+    res.json(await fresh(app));
+  } catch (e) { next(e); }
+});
+
+/** Setujui / tolak bukti bayar atau bukti potong. kind: bayar | potong. body: valid, note */
+router.post('/applications/:id/billing/:kind/verify', async (req, res, next) => {
+  try {
+    const app = await handledApp(req);
+    wf.assertStep(app, req.body.step);
+    await wf.billing.verify(app, req.user, req.params.kind, req.body.valid !== false && req.body.valid !== 'false', req.body.note);
+    res.json(await fresh(app));
+  } catch (e) { next(e); }
+});
+
+/** Unduh file tahap akhir: invoice | faktur | bayar | potong */
+router.get('/applications/:id/billing/:file', async (req, res, next) => {
+  try { await wf.billing.sendFile(res, await handledApp(req), req.params.file); } catch (e) { next(e); }
 });
 
 /** Data awal form invoice: uraian pekerjaan bawaan + jatuh tempo default. */

@@ -47,7 +47,7 @@ module.exports = {
     ok(r.s === 201, `pengajuan 1b tanpa 3 berkas diterima: ${r.s} ${r.j.message || ''}`);
     const id1b = r.j.id;
     r = await call(rina, 'GET', `/applications/${id1b}`);
-    ok(r.j.flow === '1B' && r.j.steps.length === 8 && r.j.steps[4].name === 'Sampling', 'alur 1b dipakai');
+    ok(r.j.flow === '1B' && r.j.steps.length === 9 && r.j.steps[4].name === 'Sampling' && r.j.steps[8].name === 'Invoice & Faktur', 'alur 1b dipakai');
     ok(r.j.details.find((d) => d.key === 'batch')?.value === 'BL-1 · 1 Okt 2026\nBL-2 · 2 Okt 2026', 'format nomor + tanggal');
     r = await call(rina, 'GET', `/applications/${id1b}/prefill`);
     ok(Array.isArray(r.j.payload.values.batch) && r.j.payload.values.batch[1].date === '2026-10-02', 'prefill nomor + tanggal');
@@ -62,6 +62,10 @@ module.exports = {
     await approve(id1b, 1); await approve(id1b, 2);
     a = await step(id1b);
     ok(a.current_step.code === 'ST-03', 'maju ke ST-03');
+    r = await call(sa, 'POST', `/admin/applications/${id1b}/invoice`, { step: 3, items: [{ label: 'x', qty: 1, price: 1 }] });
+    ok(r.s === 400 && /skema pembayaran/.test(r.j.message), 'proforma ditolak sebelum skema & kontrak diatur');
+    r = await t.offer(sa, id1b, 3, 'full');
+    ok(r.s === 200 && r.j.payment_scheme === 'full' && r.j.contract?.doc_type === 'Persetujuan Penawaran / Kontrak', `atur penawaran & kontrak ${r.s} ${r.j.message || ''}`);
     r = await call(sa, 'POST', `/admin/applications/${id1b}/invoice`, { step: 3, items: [{ label: 'Sertifikasi', qty: 1, price: 10000000 }], with_pph23: true });
     ok(/^\d{3}\/PSU\/SP\/[IVX]+\/\d{4}$/.test(r.j.payment?.invoice_no || '') && !r.j.payment.invoice_no.startsWith('001'), `nomor invoice SP per layanan: ${r.j.payment?.invoice_no}`);
     r = await t.raw(sa, `/admin/applications/${id1b}/invoice`);
@@ -139,6 +143,7 @@ module.exports = {
     ok(la.current_step.code === 'LAB-03', `lab maju ke LAB-03 (${la.current_step.code} ${r.j?.message || ''})`);
     const dr = (await call(sa, 'GET', `/admin/applications/${labId}/invoice-draft`)).j;
     ok(dr.specs.join('|') === 'MEREK A / Tipe 1|MEREK B' && /Biaya Pengujian\nPanci Baja\nParameter : Kekerasan/.test(dr.lab_lines[0]?.label), `draft lab: ${JSON.stringify(dr.specs)} ${dr.lab_lines[0]?.label}`);
+    await t.offer(sa, labId, 3, 'full');
     r = await call(sa, 'POST', `/admin/applications/${labId}/invoice`, { step: 3, custom_prices: { [dr.lab_lines[0].key]: 400000 }, items: [{ label: 'Biaya tambahan Ekspress', method: '', qty: 1, price: 50000 }, { label: 'Uji tambahan', method: 'SNI 1234:2020', qty: 2, price: 25000 }], with_pph23: true });
     ok(r.s === 200 && /^\d{3}\/PSU\/FIS\/[IVX]+\/\d{4}$/.test(r.j.payment?.invoice_no || ''), `terbit invoice lab ${r.s} ${r.j.message || ''} ${r.j.payment?.invoice_no}`);
     const labPrev = (await call(rina, 'GET', `/applications/${labId}/prefill`)).j;
@@ -195,8 +200,8 @@ module.exports = {
     r = await call(sa, 'GET', '/admin/applications');
     ok(r.s === 200, 'antrean admin');
     const tr = (await call(null, 'GET', '/public/track/SLP26-B1QK8TNV')).j;
-    ok(tr.steps.length === 8 && tr.current_step.name === 'Sampling', 'lacak contoh 1b');
+    ok(tr.steps.length === 9 && tr.current_step.name === 'Sampling', 'lacak contoh 1b');
     const svcs = (await call(null, 'GET', '/public/services')).j;
-    ok(svcs.find((s) => s.code === 'SP').steps.length === 10 && svcs.find((s) => s.code === 'SP').steps_1b.length === 8, 'layanan publik: alur utama + 1b');
+    ok(svcs.find((s) => s.code === 'SP').steps.length === 11 && svcs.find((s) => s.code === 'SP').steps_1b.length === 9, 'layanan publik: alur utama + 1b');
   },
 };

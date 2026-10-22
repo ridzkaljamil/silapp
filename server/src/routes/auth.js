@@ -5,15 +5,12 @@
 const router = require('express').Router();
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 const { q, one } = require('../config/db');
-const { requireAuth } = require('../middleware/auth');
+const { requireAuth, signToken: sign } = require('../middleware/auth');
 const { makeUpload } = require('../utils/upload');
 const storage = require('../utils/storage');
 const { sendMail, appUrl } = require('../utils/mailer');
 
-// tv (token_version) naik setiap kata sandi diganti/di-reset, sehingga token lama tidak berlaku lagi
-const sign = (u) => jwt.sign({ id: u.id, role: u.role, tv: u.token_version || 0 }, process.env.JWT_SECRET, { expiresIn: process.env.JWT_EXPIRES || '1d' });
 const publicUser = (u) => ({
   id: u.id, role: u.role, name: u.name, email: u.email, jabatan: u.jabatan, bidang: u.bidang, company_name: u.company_name,
   phone: u.phone || '', address: u.address || '', nib: u.nib || '', npwp: u.npwp || '',

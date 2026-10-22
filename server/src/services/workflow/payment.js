@@ -2,7 +2,7 @@
 const { q, one } = require('../../config/db');
 const { optionLabel, taxes, PPN_LABEL, parseMoney } = require('../../utils/pricing');
 const { getSettings } = require('../../utils/settings');
-const { httpError, tgl, rupiah, loadApp, stepOf, isLabTesting, assertOpen, addLog, notify } = require('./core');
+const { httpError, tgl, rupiah, loadApp, stepOf, isLabTesting, assertOpen, addLog, saveDocs, notify, SCHEME_LABEL } = require('./core');
 const { approve } = require('./steps');
 
 /* ------------------------- INVOICE & PEMBAYARAN ------------------------- */
@@ -80,16 +80,48 @@ async function nextInvoiceNo(app) {
   return { seq: r.n, year, no: `${String(r.n).padStart(3, '0')}/${code || 'PSU'}/${app.service_code}/${ROMAN[now.getMonth()]}/${year}` };
 }
 
+/** Jumlah yang dibayar di tahap Penawaran & Kontrak sesuai skema. */
+const dueNowOf = (scheme, grandTotal) => (scheme === 'akhir' ? 0 : scheme === '5050' ? Math.round(grandTotal / 2) : grandTotal);
+const CONTRACT_DOC = 'Persetujuan Penawaran / Kontrak';
+
+/**
+ * Tahap Penawaran & Kontrak: Admin menetapkan skema pembayaran (Full di Awal, 50:50, Full di Akhir) sesuai kontrak
+ * dan mengunggah persetujuan penawaran / kontrak dengan pelanggan. Bisa diubah selama bukti bayar belum diunggah.
+ */
+async function setOffer(app, user, { scheme, note, files }) {
+  assertOpen(app);
+  if (!stepOf(app).is_payment_step) throw httpError(400, 'Skema pembayaran hanya dapat diatur pada tahap Penawaran & Kontrak.');
+  if (!SCHEME_LABEL[scheme]) throw httpError(400, 'Pilih skema pembayaran: Full di Awal, 50 : 50, atau Full di Akhir.');
+  if (!['belum', 'invoice', 'tunda'].includes(app.payment_status)) throw httpError(400, 'Skema pembayaran tidak dapat diubah karena bukti bayar sudah diunggah.');
+  const hasContract = await one('SELECT id FROM documents WHERE application_id=? AND doc_type=? LIMIT 1', [app.id, CONTRACT_DOC]);
+  if (!files?.length && !hasContract) throw httpError(400, 'Unggah persetujuan penawaran / kontrak dengan pelanggan.');
+  const changed = app.payment_scheme !== scheme;
+  await q('UPDATE applications SET payment_scheme=? WHERE id=?', [scheme, app.id]);
+  // proforma yang sudah terbit menyesuaikan skema baru
+  const pending = await one('SELECT * FROM payments WHERE application_id=? AND status="invoice" ORDER BY id DESC LIMIT 1', [app.id]);
+  if (pending) {
+    await q('UPDATE payments SET due_now=? WHERE id=?', [dueNowOf(scheme, +pending.amount), pending.id]);
+    await q('UPDATE applications SET payment_status=? WHERE id=?', [scheme === 'akhir' ? 'tunda' : 'invoice', app.id]);
+  }
+  const msg = `Skema pembayaran: ${SCHEME_LABEL[scheme]}${files?.length ? '. Persetujuan penawaran / kontrak diunggah' : ''}.${note ? ` ${String(note).trim()}` : ''}`;
+  const logId = await addLog(app, 'kontrak', msg, user);
+  await saveDocs(app, user, files, { docName: CONTRACT_DOC, logId });
+  if (pending && changed) await notify(app, 'Skema pembayaran diperbarui', `Skema pembayaran pengajuan Anda menjadi ${SCHEME_LABEL[scheme]}. Rincian terbaru dapat dilihat di akun SILAPP.`);
+}
+
 async function issueInvoice(app, user, { items: manual, customPrices, withPph23, dueDate, note }) {
   assertOpen(app);
-  if (!stepOf(app).is_payment_step) throw httpError(400, 'Proforma invoice hanya dapat diterbitkan pada tahap pembayaran.');
-  if (!['belum', 'invoice'].includes(app.payment_status)) throw httpError(400, 'Proforma invoice tidak dapat diubah karena bukti bayar sudah diunggah.');
+  if (!stepOf(app).is_payment_step) throw httpError(400, 'Proforma invoice hanya dapat diterbitkan pada tahap Penawaran & Kontrak.');
+  if (!app.payment_scheme) throw httpError(400, 'Atur skema pembayaran dan unggah persetujuan penawaran / kontrak terlebih dahulu.');
+  if (!['belum', 'invoice', 'tunda'].includes(app.payment_status)) throw httpError(400, 'Proforma invoice tidak dapat diubah karena bukti bayar sudah diunggah.');
   const items = await invoiceItems(app, { items: manual, customPrices });
   const t = taxes(items.reduce((s, i) => s + i.amount, 0), !!withPph23);
   if (t.price <= 0) throw httpError(400, 'Total harga invoice harus lebih dari 0.');
-  const vals = [t.grandTotal, t.price, t.dppLain, t.ppn, t.total, t.pph23, withPph23 ? 1 : 0, JSON.stringify(items), dueDate || null, note || null, user.id];
+  const scheme = app.payment_scheme;
+  const dueNow = dueNowOf(scheme, t.grandTotal);
+  const vals = [t.grandTotal, t.price, t.dppLain, t.ppn, t.total, t.pph23, dueNow, withPph23 ? 1 : 0, JSON.stringify(items), dueDate || null, note || null, user.id];
   const pending = () => one('SELECT * FROM payments WHERE application_id=? AND status="invoice" ORDER BY id DESC LIMIT 1', [app.id]);
-  const update = (p) => q(`UPDATE payments SET amount=?, dpp=?, dpp_lain=?, ppn=?, total=?, pph23=?, with_pph23=?, items=?, due_date=?, note=?, issued_by=?, created_at=NOW()
+  const update = (p) => q(`UPDATE payments SET amount=?, dpp=?, dpp_lain=?, ppn=?, total=?, pph23=?, due_now=?, with_pph23=?, items=?, due_date=?, note=?, issued_by=?, created_at=NOW()
       WHERE id=?`, [...vals, p.id]);
   const existing = await pending();
   let num;
@@ -101,8 +133,8 @@ async function issueInvoice(app, user, { items: manual, customPrices, withPph23,
     for (let attempt = 0; ; attempt++) {
       num = await nextInvoiceNo(app);
       try {
-        await q(`INSERT INTO payments (application_id, invoice_no, invoice_seq, invoice_year, amount, dpp, dpp_lain, ppn, total, pph23, with_pph23, items, due_date, note, issued_by, status)
-          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"invoice")`, [app.id, num.no, num.seq, num.year, ...vals]);
+        await q(`INSERT INTO payments (application_id, invoice_no, invoice_seq, invoice_year, amount, dpp, dpp_lain, ppn, total, pph23, due_now, with_pph23, items, due_date, note, issued_by, status)
+          VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,"invoice")`, [app.id, num.no, num.seq, num.year, ...vals]);
         break;
       } catch (e) {
         if (e.code !== 'ER_DUP_ENTRY' || attempt >= 4) throw e;
@@ -111,10 +143,16 @@ async function issueInvoice(app, user, { items: manual, customPrices, withPph23,
       }
     }
   }
-  await q('UPDATE applications SET payment_status="invoice" WHERE id=?', [app.id]);
+  await q('UPDATE applications SET payment_status=? WHERE id=?', [scheme === 'akhir' ? 'tunda' : 'invoice', app.id]);
   const breakdown = `Harga ${rupiah(t.price)} + ${PPN_LABEL} ${rupiah(t.ppn)}${t.pph23 ? ` − PPh 23 ${rupiah(t.pph23)}` : ''}`;
-  await addLog(app, 'invoice', `Proforma invoice ${num.no} ${existing ? 'diperbarui' : 'diterbitkan'}: ${rupiah(t.grandTotal)} (${breakdown}).${note ? ' ' + note : ''}`, user);
-  await notify(app, `Proforma Invoice ${num.no}`, `Proforma invoice untuk pengajuan Anda telah terbit dengan total pembayaran ${rupiah(t.grandTotal)} (${breakdown}).${dueDate ? `\nJatuh tempo: ${tgl(dueDate)}.` : ''}\nProforma invoice dapat diunduh di akun SILAPP. Setelah membayar, unggah bukti transfer melalui akun SILAPP.`);
+  const plan = scheme === 'full' ? `dibayar penuh di tahap ini`
+    : scheme === '5050' ? `DP 50% ${rupiah(dueNow)} di tahap ini, pelunasan ${rupiah(t.grandTotal - dueNow)} setelah sertifikat terbit`
+      : 'seluruhnya dibayar setelah sertifikat terbit';
+  await addLog(app, 'invoice', `Proforma invoice ${num.no} ${existing ? 'diperbarui' : 'diterbitkan'}: ${rupiah(t.grandTotal)} (${breakdown}). Skema ${SCHEME_LABEL[scheme]}: ${plan}.${note ? ' ' + note : ''}`, user);
+  const howTo = scheme === 'akhir'
+    ? 'Sesuai skema Full di Akhir, tidak ada pembayaran di tahap ini. Tagihan dibayar setelah sertifikat/LHU terbit; invoice dan faktur pajak akan dikirim melalui SILAPP.'
+    : `Jumlah yang dibayar sekarang: ${rupiah(dueNow)}${scheme === '5050' ? ` (DP 50%; pelunasan ${rupiah(t.grandTotal - dueNow)} setelah sertifikat/LHU terbit)` : ''}.${dueDate ? `\nJatuh tempo: ${tgl(dueDate)}.` : ''}\nSetelah membayar, unggah bukti transfer melalui akun SILAPP.`;
+  await notify(app, `Proforma Invoice ${num.no}`, `Proforma invoice untuk pengajuan Anda telah terbit dengan total ${rupiah(t.grandTotal)} (${breakdown}), skema pembayaran ${SCHEME_LABEL[scheme]}.\n${howTo}\nProforma invoice dapat diunduh di akun SILAPP.`);
 }
 
 async function markPaid(app, user) {
@@ -155,7 +193,7 @@ async function allDocsDownloaded(app) {
 async function tryAutoAdvance(app) {
   const fresh = await loadApp(app.id);
   if (fresh.service_code !== 'SP' || stepOf(fresh).status_code !== 'ST-03' || fresh.status !== 'aktif') return false;
-  if (fresh.payment_status !== 'terverifikasi' || !(await allDocsDownloaded(fresh))) return false;
+  if (!['terverifikasi', 'tunda'].includes(fresh.payment_status) || !(await allDocsDownloaded(fresh))) return false;
   try {
     await approve(fresh, null, { auto: 'Pembayaran terverifikasi dan seluruh berkas telah diunduh Super Admin. Tahap selesai otomatis.' });
   } catch (e) {
@@ -165,4 +203,4 @@ async function tryAutoAdvance(app) {
   return true;
 }
 
-module.exports = { invoiceItems, nextInvoiceNo, issueInvoice, markPaid, verifyPayment, allDocsDownloaded, tryAutoAdvance };
+module.exports = { setOffer, dueNowOf, CONTRACT_DOC, invoiceItems, nextInvoiceNo, issueInvoice, markPaid, verifyPayment, allDocsDownloaded, tryAutoAdvance };

@@ -26,6 +26,7 @@ module.exports = {
     }
     const steps = await Promise.all(ids.map((id) => t.adminApp(sa, id)));
     ok(steps.every((a) => a.current_step.is_payment_step), `keduanya di tahap bayar (${steps.map((a) => a.current_step.code)})`);
+    for (const [i, id] of ids.entries()) await t.offer(sa, id, steps[i].current_step.order, 'full');
     const drafts = await Promise.all(ids.map((id) => call(sa, 'GET', `/admin/applications/${id}/invoice-draft`)));
     const body = (i) => ({ step: steps[i].current_step.order, items: [], custom_prices: { [drafts[i].j.lab_lines[0].key]: 100000 }, with_pph23: false });
     // terbit bersamaan untuk dua pengajuan berbeda: nomor tidak boleh kembar

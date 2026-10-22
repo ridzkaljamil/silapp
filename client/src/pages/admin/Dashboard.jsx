@@ -13,7 +13,12 @@ function needOf(a) {
   if (a.ext_requests > 0) return ['Perpanjangan Temuan', 'pill-progress', 'Tinjau', true];
   if (a.findings_review > 0) return ['Bukti Perbaikan', 'pill-progress', 'Tinjau', true];
   if (a.payment_status === 'menunggu') return ['Bukti Bayar Masuk', 'pill-action', 'Verifikasi', true];
-  if (a.payment_status === 'belum' && ['ST-03', 'LAB-03', 'KAL-02'].includes(a.current_step.code)) return ['Proforma Invoice Belum Terbit', 'pill-action', 'Terbitkan Proforma Invoice', true];
+  if (a.payment_status === 'belum' && a.current_step.is_payment_step) return a.payment_scheme ? ['Proforma Invoice Belum Terbit', 'pill-action', 'Terbitkan Proforma Invoice', true] : ['Penawaran & Kontrak Belum Diatur', 'pill-action', 'Atur Penawaran', true];
+  if (a.current_step.is_billing_step && a.billing) {
+    if (!a.billing.sent) return ['Invoice & Faktur Belum Dikirim', 'pill-action', 'Unggah Invoice & Faktur', true];
+    if (a.billing.pay === 'menunggu') return ['Bukti Pelunasan Masuk', 'pill-action', 'Verifikasi', true];
+    if (a.billing.cut === 'menunggu') return ['Bukti Potong Masuk', 'pill-progress', 'Verifikasi', true];
+  }
   return ['Pengajuan Baru', 'pill-progress', 'Periksa', false];
 }
 

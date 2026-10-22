@@ -67,6 +67,13 @@ export default function PengajuanDetail() {
       const fd = new FormData(); fd.append('proof', files[0]);
       return run(() => api.post(`/applications/${id}/payment`, fd), 'Bukti bayar terkirim untuk diverifikasi.');
     }
+    if (k === 'bayar' || k === 'potong') {
+      const label = k === 'bayar' ? 'Bukti Bayar' : 'Bukti Potong PPh 23';
+      if (!files.length) return toast(`Pilih file ${label.toLowerCase()} dulu.`, 'danger');
+      if (!(await ask(`Kirim ${label}?`, k === 'bayar' ? <>Bukti pelunasan <b>{rupiah(app.billing.amount_due)}</b> dikirim ke PSU untuk diverifikasi.</> : 'Bukti potong PPh 23 dikirim ke PSU untuk diverifikasi.', 'Ya, Kirim', 'receipt'))) return null;
+      const fd = new FormData(); fd.append('file', files[0]);
+      return run(() => api.post(`/applications/${id}/billing/${k}`, fd), `${label} terkirim untuk diverifikasi.`);
+    }
     if (k === 'bukti') {
       const miss = ANS_FIELDS.find(([key]) => !String(ans[key] || '').trim());
       if (miss) return toast(`Isi ${miss[1]}.`, 'danger');
@@ -96,31 +103,44 @@ export default function PengajuanDetail() {
 
   /* tugas utama pelanggan: satu tombol di kepala halaman & bar bawah HP */
   let task = null;
+  // tahap akhir Invoice & Faktur: bukti yang masih perlu diunggah pelanggan
+  const bl = app.billing?.sent && active && st.is_billing_step ? app.billing : null;
+  const billPay = bl && ['belum', 'ditolak'].includes(bl.pay.status);
+  const billCut = bl && ['belum', 'ditolak'].includes(bl.cut.status);
   if (app.status === 'aksi') {
     task = { title: st.code === 'ST-07' && app.flow !== '1B' ? 'Kirim Tindakan Perbaikan' : 'Lengkapi Permintaan PSU', text: app.action_note, cta: 'Kirim Tanggapan', onClick: () => openSheet('reply') };
   } else if (app.status === 'aktif' && st.is_payment_step && app.payment_status === 'invoice') {
-    task = { title: 'Lakukan Pembayaran', text: <>Proforma invoice <b>{rupiah(app.payment.amount)}</b>{app.payment.due_date && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}. Transfer lalu unggah bukti bayar.</>, cta: 'Unggah Bukti Bayar', onClick: () => openSheet('pay'), extra: <button className="btn btn-link btn-sm p-0" style={{ minHeight: 0 }} onClick={() => setTab('invoice')}>Lihat Rincian Invoice</button> };
+    const dp = app.payment_scheme === '5050';
+    task = { title: dp ? 'Bayar DP 50%' : 'Lakukan Pembayaran', text: <>Proforma invoice <b>{rupiah(app.payment.due_now)}</b>{app.payment.due_date && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}.{dp && <> Sisa {rupiah(app.payment.amount - app.payment.due_now)} ditagih setelah {dw} terbit.</>} Transfer lalu unggah bukti bayar.</>, cta: 'Unggah Bukti Bayar', onClick: () => openSheet('pay'), extra: <button className="btn btn-link btn-sm p-0" style={{ minHeight: 0 }} onClick={() => setTab('invoice')}>Lihat Rincian Invoice</button> };
   } else if (active && nearest) {
     task = {
       title: `Kirim Bukti Perbaikan ${todoF.length > 1 ? `${todoF.length} Temuan` : `Temuan ${nearest.category[0].toUpperCase()}${nearest.category.slice(1)}`}`,
       text: nearest.due_date ? <>Paling lambat {fmtDate(nearest.due_date)} · {nearest.days_left < 0 ? `terlambat ${-nearest.days_left} hari` : `sisa ${nearest.days_left} hari`}</> : null,
       cta: 'Kirim Bukti Perbaikan', onClick: () => openSheet('bukti', nearest),
     };
-  } else if (app.status === 'selesai' && app.certificate?.can_download === false) {
+  } else if (billPay) {
+    task = { title: 'Lakukan Pelunasan', text: <>Sisa tagihan <b>{rupiah(app.billing.amount_due)}</b>. Transfer lalu unggah bukti bayar; {dw} dapat diunduh setelah pembayaran disetujui PSU.</>, cta: 'Unggah Bukti Bayar', onClick: () => openSheet('bayar') };
+  } else if (app.certificate?.locked === 'dicabut') {
     // sertifikat dicabut: tidak ada tindakan, file tidak bisa diunduh (alasan tampil di kotak sertifikat)
-  } else if (app.status === 'selesai' && app.certificate && !app.survey_done) {
+  } else if (app.work_done && app.certificate && !app.survey_done) {
     task = { title: 'Isi Survei Kepuasan', text: `Survei wajib diisi sebelum mengunduh ${dw}.`, cta: 'Isi Survei', onClick: () => document.getElementById('sv-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) };
-  } else if (app.status === 'selesai' && app.certificate && app.survey_done) {
+  } else if (billCut) {
+    task = { title: 'Unggah Bukti Potong PPh 23', text: 'Boleh menyusul (biasanya 1–2 bulan setelah pembayaran). Kirim juga ke psuindonesia.info@gmail.com.', cta: 'Unggah Bukti Potong', onClick: () => openSheet('potong') };
+  } else if (app.work_done && app.certificate?.can_download && app.survey_done) {
     task = { title: `${dw[0].toUpperCase()}${dw.slice(1)} Siap Diunduh`, text: thanks || `Nomor ${app.certificate.certificate_no}.`, cta: `Unduh ${dw[0].toUpperCase()}${dw.slice(1)}`, icon: 'download', onClick: dlCert, done: true };
   }
   let info = null;
   if (!task && app.status === 'aktif') {
     if (st.is_payment_step && app.payment_status === 'belum') info = 'PSU sedang menyiapkan proforma invoice. Anda akan menerima email ketika proforma invoice terbit.';
+    else if (st.is_payment_step && app.payment_status === 'tunda') info = `Skema Full di Akhir: tidak ada pembayaran di tahap ini. Seluruh tagihan dibayar setelah ${dw} terbit.`;
+    else if (st.is_payment_step && !app.payment_scheme) info = 'PSU sedang menyiapkan penawaran, kontrak, dan proforma invoice. Anda akan menerima email ketika proforma invoice terbit.';
     else if (app.payment_status === 'menunggu') info = 'Bukti bayar sedang diverifikasi Admin.';
+    else if (st.is_billing_step && !app.billing?.sent) info = `${dw[0].toUpperCase()}${dw.slice(1)} sudah terbit. PSU sedang menyiapkan invoice dan faktur pajak.`;
+    else if (st.is_billing_step) info = 'Bukti yang Anda kirim sedang diverifikasi PSU.';
     else if (openF.length) info = 'Bukti perbaikan sudah dikirim dan sedang ditinjau PSU.';
     else if (app.condition === 'Ready for Collection') info = 'Kalibrasi selesai. Alat siap diambil atau dikirim kembali; hubungi contact person Laboratorium Kalibrasi.';
   }
-  if (!task && app.certificate?.can_download === false) info = `${dw[0].toUpperCase()}${dw.slice(1)} ${app.certificate.certificate_no} telah dicabut dan tidak berlaku lagi, sehingga tidak dapat diunduh. Hubungi PSU untuk informasi lebih lanjut.`;
+  if (!task && app.certificate?.locked === 'dicabut') info = `${dw[0].toUpperCase()}${dw.slice(1)} ${app.certificate.certificate_no} telah dicabut dan tidak berlaku lagi, sehingga tidak dapat diunduh. Hubungi PSU untuk informasi lebih lanjut.`;
 
   const mainBtn = task && <button className={`btn ${task.done ? 'btn-gold' : 'btn-primary'}`} onClick={task.onClick}>{task.icon && <i className={`bi bi-${task.icon}`} />}{task.cta}</button>;
   // batal hanya selama PSU belum memproses; pengajuan batal / ditutup PSU bisa diajukan ulang dengan data lama
@@ -140,9 +160,9 @@ export default function PengajuanDetail() {
         </div>
       </div>
     ),
-  } : info ? { title: 'Status', body: <div className="task-box info"><span className="ic"><i className={`bi bi-${app.certificate?.can_download === false ? 'x-octagon' : 'hourglass-split'}`} /></span><span className="small">{info}</span></div> } : null;
+  } : info ? { title: 'Status', body: <div className="task-box info"><span className="ic"><i className={`bi bi-${app.certificate?.locked === 'dicabut' ? 'x-octagon' : 'hourglass-split'}`} /></span><span className="small">{info}</span></div> } : null;
 
-  const survey = app.status === 'selesai' && app.certificate && !app.survey_done && app.certificate.can_download !== false
+  const survey = app.work_done && app.certificate && !app.survey_done && app.certificate.locked !== 'dicabut'
     ? <Survey app={app} onDone={(d) => { setApp(d.app); setThanks(d.thank_you_text); window.scrollTo({ top: 0, behavior: 'smooth' }); }} /> : null;
 
   const findingActions = active ? (f) => {
@@ -156,7 +176,8 @@ export default function PengajuanDetail() {
   } : undefined;
 
   const K = sheet?.kind;
-  const sheetTitle = { reply: 'Kirim Tanggapan', pay: 'Unggah Bukti Bayar', bukti: 'Kirim Bukti Perbaikan', ext: 'Ajukan Perpanjangan 1 Bulan', batal: 'Batalkan Pengajuan?' }[K];
+  const sheetTitle = { reply: 'Kirim Tanggapan', pay: 'Unggah Bukti Bayar', bayar: 'Unggah Bukti Bayar Pelunasan', potong: 'Unggah Bukti Potong PPh 23', bukti: 'Kirim Bukti Perbaikan', ext: 'Ajukan Perpanjangan 1 Bulan', batal: 'Batalkan Pengajuan?' }[K];
+  const fileOnly = ['pay', 'bayar', 'potong'].includes(K);
   return (
     <>
       <ApplicationView app={app} backTo="/klien/pengajuan" tab={tab} onTab={setTab}
@@ -164,12 +185,14 @@ export default function PengajuanDetail() {
         onDownloadDoc={(d) => download(`/applications/${id}/documents/${d.id}`, d.original_name).catch((e) => toast(errMsg(e), 'danger'))}
         onDownloadInvoice={() => download(`/applications/${id}/invoice`, `Proforma-Invoice-${app.payment.invoice_no.replace(/\//g, '-')}.pdf`).catch((e) => toast(errMsg(e), 'danger'))}
         onDownloadProof={() => download(`/applications/${id}/payment-proof`, `bukti-bayar-${app.application_no}`).catch((e) => toast(errMsg(e), 'danger'))}
+        onBillingUpload={active && st.is_billing_step ? (kind) => openSheet(kind) : undefined}
+        onBillingDownload={(file) => download(`/applications/${id}/billing/${file}`, `${file}-${app.application_no}`).catch((e) => toast(errMsg(e), 'danger'))}
         findingActions={findingActions}>
         {survey}
       </ApplicationView>
       <Sheet open={!!sheet} onClose={() => !busy && setSheet(null)} title={sheetTitle}
-        icon={{ reply: 'reply', pay: 'receipt', bukti: 'upload', ext: 'calendar-plus', batal: 'x-circle' }[K]} danger={K === 'batal'}
-        sub={K === 'batal' ? 'Pengajuan berhenti dan tidak diproses PSU. Setelah dibatalkan, Anda bisa mengajukan ulang dengan data yang sudah diperbaiki.' : K === 'reply' ? app.action_note : K === 'pay' ? `Total ${rupiah(app.payment?.amount)} · ${app.payment?.invoice_no || ''}` : sheet?.f ? `Temuan ${sheet.f.category} #${sheet.f.id}: ${sheet.f.description}` : ''}
+        icon={{ reply: 'reply', pay: 'receipt', bayar: 'receipt', potong: 'file-earmark-text', bukti: 'upload', ext: 'calendar-plus', batal: 'x-circle' }[K]} danger={K === 'batal'}
+        sub={K === 'batal' ? 'Pengajuan berhenti dan tidak diproses PSU. Setelah dibatalkan, Anda bisa mengajukan ulang dengan data yang sudah diperbaiki.' : K === 'reply' ? app.action_note : K === 'pay' ? `Dibayar sekarang ${rupiah(app.payment?.due_now)} · ${app.payment?.invoice_no || ''}` : K === 'bayar' ? `Sisa tagihan ${rupiah(app.billing?.amount_due)}` : K === 'potong' ? app.billing?.pph_message : sheet?.f ? `Temuan ${sheet.f.category} #${sheet.f.id}: ${sheet.f.description}` : ''}
         footer={<><button className="btn btn-outline-secondary" disabled={busy} onClick={() => setSheet(null)}>Batal</button><button className={`btn ${K === 'batal' ? 'btn-danger' : 'btn-primary'}`} disabled={busy} onClick={submit}>{busy ? 'Mengirim…' : K === 'batal' ? 'Ya, Batalkan' : 'Kirim'}</button></>}>
         <div className="d-flex flex-column gap-3">
           {K === 'bukti' && ANS_FIELDS.map(([key, label, hint]) => (
@@ -178,7 +201,7 @@ export default function PengajuanDetail() {
               <textarea id={`cs-${key}`} className="form-control" rows={2} value={ans[key] || ''} placeholder={hint} onChange={(e) => changeAns(key, e.target.value)} />
             </div>
           ))}
-          {K !== 'pay' && (
+          {!fileOnly && (
             <div>
               <label className="form-label" htmlFor="cs-note">{K === 'batal' ? 'Alasan Pembatalan' : K === 'ext' ? 'Alasan Perpanjangan' : K === 'bukti' ? <>Keterangan Tambahan <span className="fw-normal text-muted2">(opsional)</span></> : 'Tanggapan / Keterangan'}</label>
               <textarea id="cs-note" className="form-control" rows={K === 'bukti' ? 2 : 3} value={note} onChange={(e) => changeNote(e.target.value)} />
@@ -187,8 +210,8 @@ export default function PengajuanDetail() {
           )}
           {K !== 'batal' && (
             <div>
-              <label className="form-label" htmlFor="cs-file">{K === 'pay' ? 'File Bukti Transfer' : K === 'bukti' ? <>File Bukti Perbaikan <span className="text-danger">*</span></> : K === 'ext' ? <>Lampiran Pendukung <span className="fw-normal text-muted2">(opsional)</span></> : st.code === 'ST-07' && app.flow !== '1B' ? 'Unggah Tindakan Perbaikan' : 'Dokumen / Data yang Diminta'}</label>
-              <FileDrop id="cs-file" multiple={K !== 'pay'} files={files} onChange={setFiles} />
+              <label className="form-label" htmlFor="cs-file">{K === 'pay' || K === 'bayar' ? 'File Bukti Transfer' : K === 'potong' ? 'File Bukti Potong PPh 23' : K === 'bukti' ? <>File Bukti Perbaikan <span className="text-danger">*</span></> : K === 'ext' ? <>Lampiran Pendukung <span className="fw-normal text-muted2">(opsional)</span></> : st.code === 'ST-07' && app.flow !== '1B' ? 'Unggah Tindakan Perbaikan' : 'Dokumen / Data yang Diminta'}</label>
+              <FileDrop id="cs-file" multiple={!fileOnly} files={files} onChange={setFiles} />
             </div>
           )}
         </div>

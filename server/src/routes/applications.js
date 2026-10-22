@@ -337,6 +337,20 @@ router.get('/:id/invoice', async (req, res, next) => {
   } catch (e) { next(e); }
 });
 
+/** Tahap Invoice & Faktur: unggah bukti bayar pelunasan / bukti potong PPh 23. kind: bayar | potong */
+router.post('/:id/billing/:kind', upload.single('file'), async (req, res, next) => {
+  try {
+    const app = await ownApp(req);
+    await wf.billing.customerUpload(app, req.user, req.params.kind, req.file);
+    res.json(await custDetail(app.id));
+  } catch (e) { next(e); }
+});
+
+/** Unduh invoice / faktur pajak dari PSU, atau bukti yang diunggah sendiri. */
+router.get('/:id/billing/:file', async (req, res, next) => {
+  try { await wf.billing.sendFile(res, await ownApp(req), req.params.file); } catch (e) { next(e); }
+});
+
 /** Bukti bayar yang pernah diunggah pelanggan sendiri. */
 router.get('/:id/payment-proof', async (req, res, next) => {
   try {
@@ -399,9 +413,11 @@ router.get('/:id/certificate', async (req, res, next) => {
   try {
     const app = await ownApp(req);
     const cert = await one('SELECT * FROM certificates WHERE application_id=?', [app.id]);
-    if (!cert || !cert.file_path || app.status !== 'selesai') return res.status(404).json({ message: 'File sertifikat belum tersedia.' });
+    if (!cert || !cert.file_path || !wf.workDone(app)) return res.status(404).json({ message: 'File sertifikat belum tersedia.' });
     // sertifikat yang dicabut tidak berlaku lagi: file tidak bisa diunduh pelanggan (Admin tetap bisa melihat arsipnya)
     if (cert.status === 'dicabut') return res.status(403).json({ code: 'CERT_REVOKED', message: 'Sertifikat ini telah dicabut dan tidak berlaku lagi, sehingga tidak dapat diunduh. Hubungi PSU untuk informasi lebih lanjut.' });
+    // skema 50:50 / Full di Akhir: sertifikat/LHU baru bisa diunduh setelah pelunasan disetujui
+    if (!wf.finalPaid(app)) return res.status(403).json({ code: 'CERT_UNPAID', message: 'Dokumen dapat diunduh setelah bukti bayar pelunasan disetujui PSU.' });
     if (!(await one('SELECT id FROM survey_responses WHERE application_id=?', [app.id]))) return res.status(403).json({ message: 'Isi survei kepuasan pelanggan terlebih dahulu.' });
     await storage.send(res, cert.file_path, `${cert.certificate_no.replace(/[\/\\]/g, '-')}.pdf`);
   } catch (e) { next(e); }

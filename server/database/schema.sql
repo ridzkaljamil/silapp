@@ -5,7 +5,7 @@
 SET NAMES utf8mb4;
 SET FOREIGN_KEY_CHECKS = 0;
 
-DROP TABLE IF EXISTS reminder_log, email_outbox, password_resets, certificate_logs, drafts, doc_templates, notifications, survey_followups, survey_answers, survey_responses, survey_questions, settings, legacy_certificates,
+DROP TABLE IF EXISTS billings, reminder_log, email_outbox, password_resets, certificate_logs, drafts, doc_templates, notifications, survey_followups, survey_answers, survey_responses, survey_questions, settings, legacy_certificates,
   findings, service_fields, service_documents,
   certificates, status_logs, payments, documents, samples, equipment,
   application_parameters, application_details, applications, product_parameters, products,
@@ -63,6 +63,7 @@ CREATE TABLE service_steps (
   is_optional         TINYINT(1) NOT NULL DEFAULT 0,
   is_payment_step     TINYINT(1) NOT NULL DEFAULT 0,
   is_certificate_step TINYINT(1) NOT NULL DEFAULT 0,
+  is_billing_step     TINYINT(1) NOT NULL DEFAULT 0,  -- tahap akhir Invoice & Faktur (setelah sertifikat/LHU terbit)
   sla_days            INT NULL,
   flow                VARCHAR(10) NOT NULL DEFAULT '',  -- '' = alur utama; '1B' = alur khusus skema Tipe 1b (SP)
   UNIQUE KEY uq_step (service_id, flow, step_order),
@@ -119,7 +120,8 @@ CREATE TABLE applications (
   full_sni           TINYINT(1) NOT NULL DEFAULT 0,      -- Lab: parameter lengkap sesuai SNI (harga paket)
   package_snapshot   DECIMAL(14,2) NULL,                 -- harga paket per sampel saat diajukan (perubahan daftar harga tidak memengaruhi)
   price_option       ENUM('std','alt') NOT NULL DEFAULT 'std', -- Lab: Reguler/Dalam Negeri (std) atau Ekspress/Luar Negeri (alt)
-  payment_status     ENUM('belum','invoice','menunggu','terverifikasi') NOT NULL DEFAULT 'belum',
+  payment_status     ENUM('belum','invoice','menunggu','terverifikasi','tunda') NOT NULL DEFAULT 'belum',  -- tunda = skema Full di Akhir
+  payment_scheme     ENUM('full','5050','akhir') NULL,   -- skema pembayaran sesuai kontrak (tahap Penawaran & Kontrak)
   docs_downloaded_at DATETIME(3) NULL,                      -- Super Admin mengunduh semua berkas (ZIP)
   audit_report_date  DATE NULL,                          -- tanggal laporan audit (dasar tenggat temuan)
   lab_name           VARCHAR(160) NULL,                  -- ST-06: lab tempat pengujian (PSU / lab lain)
@@ -220,6 +222,7 @@ CREATE TABLE payments (
   ppn            DECIMAL(14,2) NULL,          -- PPN 12% × DPP nilai lain
   total          DECIMAL(14,2) NULL,          -- harga + PPN
   pph23          DECIMAL(14,2) NOT NULL DEFAULT 0, -- PPh 23 2% × harga (jika dipotong)
+  due_now        DECIMAL(14,2) NULL,          -- dibayar di tahap Penawaran & Kontrak (Full: semua, 50:50: separuh, Full di Akhir: 0)
   with_pph23     TINYINT(1) NOT NULL DEFAULT 0,
   items          TEXT NULL,                   -- rincian (JSON)
   invoice_file   VARCHAR(255) NULL,
@@ -244,7 +247,7 @@ CREATE TABLE status_logs (
   status_code      VARCHAR(10) NOT NULL,
   step_name        VARCHAR(120) NOT NULL,
   action           ENUM('buat','mulai','setujui','minta_tindakan','tanggapan','abaikan','tolak','bayar','parameter','terbit',
-                        'invoice','lampiran','temuan','perpanjangan','unduh','survei','info','batal') NOT NULL,
+                        'invoice','lampiran','temuan','perpanjangan','unduh','survei','info','batal','kontrak','tagihan') NOT NULL,
   note             TEXT NULL,
   customer_visible TINYINT(1) NOT NULL DEFAULT 1,
   pic_user_id      INT NULL,
@@ -450,4 +453,15 @@ CREATE TABLE email_outbox (
 CREATE TABLE reminder_log (
   id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(30) NOT NULL, ref_id INT NOT NULL, mark VARCHAR(30) NOT NULL,
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_reminder (kind, ref_id, mark)
+) ENGINE=InnoDB;
+
+-- Tahap akhir Invoice & Faktur: file dari PSU, bukti bayar (pelunasan) dan bukti potong PPh 23 dari pelanggan, disetujui masing-masing
+CREATE TABLE billings (
+  application_id INT PRIMARY KEY, amount_due DECIMAL(14,2) NOT NULL DEFAULT 0, with_pph23 TINYINT(1) NOT NULL DEFAULT 0,
+  invoice_path VARCHAR(255) NULL, invoice_name VARCHAR(255) NULL, faktur_path VARCHAR(255) NULL, faktur_name VARCHAR(255) NULL,
+  note TEXT NULL, sent_at DATETIME NULL,
+  pay_status ENUM('tidak_perlu','belum','menunggu','disetujui','ditolak') NOT NULL DEFAULT 'belum', pay_path VARCHAR(255) NULL, pay_at DATETIME NULL, pay_note VARCHAR(500) NULL,
+  cut_status ENUM('tidak_perlu','belum','menunggu','disetujui','ditolak') NOT NULL DEFAULT 'belum', cut_path VARCHAR(255) NULL, cut_at DATETIME NULL, cut_note VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME NULL,
+  CONSTRAINT fk_bill_app FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
 ) ENGINE=InnoDB;

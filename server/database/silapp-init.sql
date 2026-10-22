@@ -1,6 +1,6 @@
 -- =========================================================
 -- SILAPP · data awal untuk server hosting
--- Dibuat: 2026-10-17 (npm run db:sql)
+-- Dibuat: 2026-10-22 (npm run db:sql)
 -- Isi   : struktur tabel + data master (layanan, tahapan, form, ruang lingkup & harga, survei, pengaturan).
 --         Tanpa akun pengguna dan tanpa data contoh.
 -- Cara  : phpMyAdmin > pilih database SILAPP yang masih kosong > Import > pilih file ini > Go.
@@ -63,6 +63,7 @@ CREATE TABLE service_steps (
   is_optional         TINYINT(1) NOT NULL DEFAULT 0,
   is_payment_step     TINYINT(1) NOT NULL DEFAULT 0,
   is_certificate_step TINYINT(1) NOT NULL DEFAULT 0,
+  is_billing_step     TINYINT(1) NOT NULL DEFAULT 0,  -- tahap akhir Invoice & Faktur (setelah sertifikat/LHU terbit)
   sla_days            INT NULL,
   flow                VARCHAR(10) NOT NULL DEFAULT '',  -- '' = alur utama; '1B' = alur khusus skema Tipe 1b (SP)
   UNIQUE KEY uq_step (service_id, flow, step_order),
@@ -119,7 +120,8 @@ CREATE TABLE applications (
   full_sni           TINYINT(1) NOT NULL DEFAULT 0,      -- Lab: parameter lengkap sesuai SNI (harga paket)
   package_snapshot   DECIMAL(14,2) NULL,                 -- harga paket per sampel saat diajukan (perubahan daftar harga tidak memengaruhi)
   price_option       ENUM('std','alt') NOT NULL DEFAULT 'std', -- Lab: Reguler/Dalam Negeri (std) atau Ekspress/Luar Negeri (alt)
-  payment_status     ENUM('belum','invoice','menunggu','terverifikasi') NOT NULL DEFAULT 'belum',
+  payment_status     ENUM('belum','invoice','menunggu','terverifikasi','tunda') NOT NULL DEFAULT 'belum',  -- tunda = skema Full di Akhir
+  payment_scheme     ENUM('full','5050','akhir') NULL,   -- skema pembayaran sesuai kontrak (tahap Penawaran & Kontrak)
   docs_downloaded_at DATETIME(3) NULL,                      -- Super Admin mengunduh semua berkas (ZIP)
   audit_report_date  DATE NULL,                          -- tanggal laporan audit (dasar tenggat temuan)
   lab_name           VARCHAR(160) NULL,                  -- ST-06: lab tempat pengujian (PSU / lab lain)
@@ -220,6 +222,7 @@ CREATE TABLE payments (
   ppn            DECIMAL(14,2) NULL,          -- PPN 12% × DPP nilai lain
   total          DECIMAL(14,2) NULL,          -- harga + PPN
   pph23          DECIMAL(14,2) NOT NULL DEFAULT 0, -- PPh 23 2% × harga (jika dipotong)
+  due_now        DECIMAL(14,2) NULL,          -- dibayar di tahap Penawaran & Kontrak (Full: semua, 50:50: separuh, Full di Akhir: 0)
   with_pph23     TINYINT(1) NOT NULL DEFAULT 0,
   items          TEXT NULL,                   -- rincian (JSON)
   invoice_file   VARCHAR(255) NULL,
@@ -244,7 +247,7 @@ CREATE TABLE status_logs (
   status_code      VARCHAR(10) NOT NULL,
   step_name        VARCHAR(120) NOT NULL,
   action           ENUM('buat','mulai','setujui','minta_tindakan','tanggapan','abaikan','tolak','bayar','parameter','terbit',
-                        'invoice','lampiran','temuan','perpanjangan','unduh','survei','info','batal') NOT NULL,
+                        'invoice','lampiran','temuan','perpanjangan','unduh','survei','info','batal','kontrak','tagihan') NOT NULL,
   note             TEXT NULL,
   customer_visible TINYINT(1) NOT NULL DEFAULT 1,
   pic_user_id      INT NULL,
@@ -452,6 +455,17 @@ CREATE TABLE reminder_log (
   created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_reminder (kind, ref_id, mark)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
+-- Tahap akhir Invoice & Faktur: file dari PSU, bukti bayar (pelunasan) dan bukti potong PPh 23 dari pelanggan, disetujui masing-masing
+CREATE TABLE billings (
+  application_id INT PRIMARY KEY, amount_due DECIMAL(14,2) NOT NULL DEFAULT 0, with_pph23 TINYINT(1) NOT NULL DEFAULT 0,
+  invoice_path VARCHAR(255) NULL, invoice_name VARCHAR(255) NULL, faktur_path VARCHAR(255) NULL, faktur_name VARCHAR(255) NULL,
+  note TEXT NULL, sent_at DATETIME NULL,
+  pay_status ENUM('tidak_perlu','belum','menunggu','disetujui','ditolak') NOT NULL DEFAULT 'belum', pay_path VARCHAR(255) NULL, pay_at DATETIME NULL, pay_note VARCHAR(500) NULL,
+  cut_status ENUM('tidak_perlu','belum','menunggu','disetujui','ditolak') NOT NULL DEFAULT 'belum', cut_path VARCHAR(255) NULL, cut_at DATETIME NULL, cut_note VARCHAR(500) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME NULL,
+  CONSTRAINT fk_bill_app FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
 SET FOREIGN_KEY_CHECKS = 0;
 
 -- product_parameters (84 baris)
@@ -633,65 +647,72 @@ INSERT INTO `service_fields` (`id`, `service_id`, `field_key`, `label`, `type`, 
 (13, 5, 'keterangan', 'Keterangan Tambahan', 'textarea', NULL, 0, NULL, 0, 0, 1),
 (14, 6, 'tanggal_diinginkan', 'Tanggal Kalibrasi yang Diinginkan', 'date', NULL, 0, NULL, 0, 0, 1);
 
--- service_steps (57 baris)
-INSERT INTO `service_steps` (`id`, `service_id`, `step_order`, `status_code`, `name`, `progress_pct`, `is_optional`, `is_payment_step`, `is_certificate_step`, `sla_days`, `flow`) VALUES
-(1, 1, 1, 'ST-01', 'Permohonan Diterima', 10, 0, 0, 0, NULL, ''),
-(2, 1, 2, 'ST-02', 'Verifikasi & Tinjauan Permohonan', 20, 0, 0, 0, NULL, ''),
-(3, 1, 3, 'ST-03', 'Penawaran, Kontrak & Pembayaran', 30, 0, 1, 0, NULL, ''),
-(4, 1, 4, 'ST-04', 'Penjadwalan & Penugasan', 40, 0, 0, 0, NULL, ''),
-(5, 1, 5, 'ST-05', 'Evaluasi/Audit & Sampling', 50, 0, 0, 0, NULL, ''),
-(6, 1, 6, 'ST-06', 'Pengujian Laboratorium', 60, 0, 0, 0, NULL, ''),
-(7, 1, 7, 'ST-07', 'Tindakan Perbaikan', 70, 1, 0, 0, NULL, ''),
-(8, 1, 8, 'ST-08', 'Review Hasil Evaluasi', 80, 0, 0, 0, NULL, ''),
-(9, 1, 9, 'ST-09', 'Keputusan Sertifikasi', 90, 0, 0, 0, NULL, ''),
-(10, 1, 10, 'ST-10', 'Sertifikat Terbit', 100, 0, 0, 1, NULL, ''),
-(11, 1, 1, 'ST-01', 'Permohonan Diterima', 10, 0, 0, 0, NULL, '1B'),
-(12, 1, 2, 'ST-02', 'Verifikasi & Tinjauan Permohonan', 20, 0, 0, 0, NULL, '1B'),
-(13, 1, 3, 'ST-03', 'Penawaran, Kontrak & Pembayaran', 30, 0, 1, 0, NULL, '1B'),
-(14, 1, 4, 'ST-04', 'Penjadwalan & Penugasan', 40, 0, 0, 0, NULL, '1B'),
-(15, 1, 5, 'ST-05', 'Sampling', 50, 0, 0, 0, NULL, '1B'),
-(16, 1, 6, 'ST-06', 'Pengujian Laboratorium', 65, 0, 0, 0, NULL, '1B'),
-(17, 1, 7, 'ST-07', 'Review & Keputusan', 85, 0, 0, 0, NULL, '1B'),
-(18, 1, 8, 'ST-08', 'Sertifikat Terbit', 100, 0, 0, 1, NULL, '1B'),
-(19, 3, 1, 'LAB-01', 'Permohonan Diterima', 10, 0, 0, 0, NULL, ''),
-(20, 3, 2, 'LAB-02', 'Sampel Diterima & Diregistrasi', 20, 0, 0, 0, NULL, ''),
-(21, 3, 3, 'LAB-03', 'Verifikasi, Kontrak & Pembayaran', 35, 0, 1, 0, NULL, ''),
-(22, 3, 4, 'LAB-04', 'Proses Pengujian', 60, 0, 0, 0, NULL, ''),
-(23, 3, 5, 'LAB-05', 'Review & Verifikasi Hasil', 80, 0, 0, 0, NULL, ''),
-(24, 3, 6, 'LAB-06', 'Penyusunan LHU', 95, 0, 0, 1, NULL, ''),
-(25, 3, 7, 'LAB-07', 'LHU Terbit', 100, 0, 0, 0, NULL, ''),
-(26, 4, 1, 'LAB-01', 'Permohonan Diterima', 10, 0, 0, 0, NULL, ''),
-(27, 4, 2, 'LAB-02', 'Sampel Diterima & Diregistrasi', 20, 0, 0, 0, NULL, ''),
-(28, 4, 3, 'LAB-03', 'Verifikasi, Kontrak & Pembayaran', 35, 0, 1, 0, NULL, ''),
-(29, 4, 4, 'LAB-04', 'Proses Pengujian', 60, 0, 0, 0, NULL, ''),
-(30, 4, 5, 'LAB-05', 'Review & Verifikasi Hasil', 80, 0, 0, 0, NULL, ''),
-(31, 4, 6, 'LAB-06', 'Penyusunan LHU', 95, 0, 0, 1, NULL, ''),
-(32, 4, 7, 'LAB-07', 'LHU Terbit', 100, 0, 0, 0, NULL, ''),
-(33, 5, 1, 'LAB-01', 'Permohonan Diterima', 10, 0, 0, 0, NULL, ''),
-(34, 5, 2, 'LAB-02', 'Sampel Diterima & Diregistrasi', 20, 0, 0, 0, NULL, ''),
-(35, 5, 3, 'LAB-03', 'Verifikasi, Kontrak & Pembayaran', 35, 0, 1, 0, NULL, ''),
-(36, 5, 4, 'LAB-04', 'Proses Pengujian', 60, 0, 0, 0, NULL, ''),
-(37, 5, 5, 'LAB-05', 'Review & Verifikasi Hasil', 80, 0, 0, 0, NULL, ''),
-(38, 5, 6, 'LAB-06', 'Penyusunan LHU', 95, 0, 0, 1, NULL, ''),
-(39, 5, 7, 'LAB-07', 'LHU Terbit', 100, 0, 0, 0, NULL, ''),
-(40, 6, 1, 'KAL-01', 'Permohonan Diterima', 10, 0, 0, 0, NULL, ''),
-(41, 6, 2, 'KAL-02', 'Verifikasi, Kontrak & Pembayaran', 20, 0, 1, 0, NULL, ''),
-(42, 6, 3, 'KAL-03', 'Alat Diterima & Diregistrasi', 30, 0, 0, 0, NULL, ''),
-(43, 6, 4, 'KAL-04', 'Persiapan Kalibrasi', 40, 0, 0, 0, NULL, ''),
-(44, 6, 5, 'KAL-05', 'Pelaksanaan Kalibrasi', 65, 0, 0, 0, NULL, ''),
-(45, 6, 6, 'KAL-06', 'Review & Verifikasi Hasil', 80, 0, 0, 0, NULL, ''),
-(46, 6, 7, 'KAL-07', 'Penerbitan Sertifikat', 95, 0, 0, 1, NULL, ''),
-(47, 6, 8, 'KAL-08', 'Sertifikat Terbit', 100, 0, 0, 0, NULL, ''),
-(48, 6, 9, 'KAL-09', 'Pengembalian Alat', 100, 1, 0, 0, NULL, ''),
-(49, 7, 1, 'LSM-01', 'Permohonan Diterima', 10, 0, 0, 0, NULL, ''),
-(50, 7, 2, 'LSM-02', 'Verifikasi & Tinjauan Permohonan', 20, 0, 0, 0, NULL, ''),
-(51, 7, 3, 'LSM-03', 'Penawaran, Kontrak & Pembayaran', 30, 0, 1, 0, NULL, ''),
-(52, 7, 4, 'LSM-04', 'Penjadwalan & Penugasan', 40, 0, 0, 0, NULL, ''),
-(53, 7, 5, 'LSM-05', 'Evaluasi/Audit', 55, 0, 0, 0, NULL, ''),
-(54, 7, 6, 'LSM-06', 'Tindakan Perbaikan', 70, 1, 0, 0, NULL, ''),
-(55, 7, 7, 'LSM-07', 'Review Hasil Evaluasi', 80, 0, 0, 0, NULL, ''),
-(56, 7, 8, 'LSM-08', 'Keputusan Sertifikasi', 90, 0, 0, 0, NULL, ''),
-(57, 7, 9, 'LSM-09', 'Sertifikat Terbit', 100, 0, 0, 1, NULL, '');
+-- service_steps (64 baris)
+INSERT INTO `service_steps` (`id`, `service_id`, `step_order`, `status_code`, `name`, `progress_pct`, `is_optional`, `is_payment_step`, `is_certificate_step`, `is_billing_step`, `sla_days`, `flow`) VALUES
+(1, 1, 1, 'ST-01', 'Permohonan Diterima', 10, 0, 0, 0, 0, NULL, ''),
+(2, 1, 2, 'ST-02', 'Verifikasi & Tinjauan Permohonan', 20, 0, 0, 0, 0, NULL, ''),
+(3, 1, 3, 'ST-03', 'Penawaran & Kontrak', 30, 0, 1, 0, 0, NULL, ''),
+(4, 1, 4, 'ST-04', 'Penjadwalan & Penugasan', 40, 0, 0, 0, 0, NULL, ''),
+(5, 1, 5, 'ST-05', 'Evaluasi/Audit & Sampling', 50, 0, 0, 0, 0, NULL, ''),
+(6, 1, 6, 'ST-06', 'Pengujian Laboratorium', 60, 0, 0, 0, 0, NULL, ''),
+(7, 1, 7, 'ST-07', 'Tindakan Perbaikan', 70, 1, 0, 0, 0, NULL, ''),
+(8, 1, 8, 'ST-08', 'Review Hasil Evaluasi', 80, 0, 0, 0, 0, NULL, ''),
+(9, 1, 9, 'ST-09', 'Keputusan Sertifikasi', 90, 0, 0, 0, 0, NULL, ''),
+(10, 1, 10, 'ST-10', 'Sertifikat Terbit', 95, 0, 0, 1, 0, NULL, ''),
+(11, 1, 11, 'ST-11', 'Invoice & Faktur', 98, 0, 0, 0, 1, NULL, ''),
+(12, 1, 1, 'ST-01', 'Permohonan Diterima', 10, 0, 0, 0, 0, NULL, '1B'),
+(13, 1, 2, 'ST-02', 'Verifikasi & Tinjauan Permohonan', 20, 0, 0, 0, 0, NULL, '1B'),
+(14, 1, 3, 'ST-03', 'Penawaran & Kontrak', 30, 0, 1, 0, 0, NULL, '1B'),
+(15, 1, 4, 'ST-04', 'Penjadwalan & Penugasan', 40, 0, 0, 0, 0, NULL, '1B'),
+(16, 1, 5, 'ST-05', 'Sampling', 50, 0, 0, 0, 0, NULL, '1B'),
+(17, 1, 6, 'ST-06', 'Pengujian Laboratorium', 65, 0, 0, 0, 0, NULL, '1B'),
+(18, 1, 7, 'ST-07', 'Review & Keputusan', 85, 0, 0, 0, 0, NULL, '1B'),
+(19, 1, 8, 'ST-08', 'Sertifikat Terbit', 95, 0, 0, 1, 0, NULL, '1B'),
+(20, 1, 9, 'ST-09', 'Invoice & Faktur', 98, 0, 0, 0, 1, NULL, '1B'),
+(21, 3, 1, 'LAB-01', 'Permohonan Diterima', 10, 0, 0, 0, 0, NULL, ''),
+(22, 3, 2, 'LAB-02', 'Sampel Diterima & Diregistrasi', 20, 0, 0, 0, 0, NULL, ''),
+(23, 3, 3, 'LAB-03', 'Penawaran & Kontrak', 35, 0, 1, 0, 0, NULL, ''),
+(24, 3, 4, 'LAB-04', 'Proses Pengujian', 60, 0, 0, 0, 0, NULL, ''),
+(25, 3, 5, 'LAB-05', 'Review & Verifikasi Hasil', 80, 0, 0, 0, 0, NULL, ''),
+(26, 3, 6, 'LAB-06', 'Penyusunan LHU', 90, 0, 0, 1, 0, NULL, ''),
+(27, 3, 7, 'LAB-07', 'LHU Terbit', 95, 0, 0, 0, 0, NULL, ''),
+(28, 3, 8, 'LAB-08', 'Invoice & Faktur', 98, 0, 0, 0, 1, NULL, ''),
+(29, 4, 1, 'LAB-01', 'Permohonan Diterima', 10, 0, 0, 0, 0, NULL, ''),
+(30, 4, 2, 'LAB-02', 'Sampel Diterima & Diregistrasi', 20, 0, 0, 0, 0, NULL, ''),
+(31, 4, 3, 'LAB-03', 'Penawaran & Kontrak', 35, 0, 1, 0, 0, NULL, ''),
+(32, 4, 4, 'LAB-04', 'Proses Pengujian', 60, 0, 0, 0, 0, NULL, ''),
+(33, 4, 5, 'LAB-05', 'Review & Verifikasi Hasil', 80, 0, 0, 0, 0, NULL, ''),
+(34, 4, 6, 'LAB-06', 'Penyusunan LHU', 90, 0, 0, 1, 0, NULL, ''),
+(35, 4, 7, 'LAB-07', 'LHU Terbit', 95, 0, 0, 0, 0, NULL, ''),
+(36, 4, 8, 'LAB-08', 'Invoice & Faktur', 98, 0, 0, 0, 1, NULL, ''),
+(37, 5, 1, 'LAB-01', 'Permohonan Diterima', 10, 0, 0, 0, 0, NULL, ''),
+(38, 5, 2, 'LAB-02', 'Sampel Diterima & Diregistrasi', 20, 0, 0, 0, 0, NULL, ''),
+(39, 5, 3, 'LAB-03', 'Penawaran & Kontrak', 35, 0, 1, 0, 0, NULL, ''),
+(40, 5, 4, 'LAB-04', 'Proses Pengujian', 60, 0, 0, 0, 0, NULL, ''),
+(41, 5, 5, 'LAB-05', 'Review & Verifikasi Hasil', 80, 0, 0, 0, 0, NULL, ''),
+(42, 5, 6, 'LAB-06', 'Penyusunan LHU', 90, 0, 0, 1, 0, NULL, ''),
+(43, 5, 7, 'LAB-07', 'LHU Terbit', 95, 0, 0, 0, 0, NULL, ''),
+(44, 5, 8, 'LAB-08', 'Invoice & Faktur', 98, 0, 0, 0, 1, NULL, ''),
+(45, 6, 1, 'KAL-01', 'Permohonan Diterima', 10, 0, 0, 0, 0, NULL, ''),
+(46, 6, 2, 'KAL-02', 'Penawaran & Kontrak', 20, 0, 1, 0, 0, NULL, ''),
+(47, 6, 3, 'KAL-03', 'Alat Diterima & Diregistrasi', 30, 0, 0, 0, 0, NULL, ''),
+(48, 6, 4, 'KAL-04', 'Persiapan Kalibrasi', 40, 0, 0, 0, 0, NULL, ''),
+(49, 6, 5, 'KAL-05', 'Pelaksanaan Kalibrasi', 65, 0, 0, 0, 0, NULL, ''),
+(50, 6, 6, 'KAL-06', 'Review & Verifikasi Hasil', 80, 0, 0, 0, 0, NULL, ''),
+(51, 6, 7, 'KAL-07', 'Penerbitan Sertifikat', 90, 0, 0, 1, 0, NULL, ''),
+(52, 6, 8, 'KAL-08', 'Sertifikat Terbit', 95, 0, 0, 0, 0, NULL, ''),
+(53, 6, 9, 'KAL-09', 'Pengembalian Alat', 95, 1, 0, 0, 0, NULL, ''),
+(54, 6, 10, 'KAL-10', 'Invoice & Faktur', 98, 0, 0, 0, 1, NULL, ''),
+(55, 7, 1, 'LSM-01', 'Permohonan Diterima', 10, 0, 0, 0, 0, NULL, ''),
+(56, 7, 2, 'LSM-02', 'Verifikasi & Tinjauan Permohonan', 20, 0, 0, 0, 0, NULL, ''),
+(57, 7, 3, 'LSM-03', 'Penawaran & Kontrak', 30, 0, 1, 0, 0, NULL, ''),
+(58, 7, 4, 'LSM-04', 'Penjadwalan & Penugasan', 40, 0, 0, 0, 0, NULL, ''),
+(59, 7, 5, 'LSM-05', 'Evaluasi/Audit', 55, 0, 0, 0, 0, NULL, ''),
+(60, 7, 6, 'LSM-06', 'Tindakan Perbaikan', 70, 1, 0, 0, 0, NULL, ''),
+(61, 7, 7, 'LSM-07', 'Review Hasil Evaluasi', 80, 0, 0, 0, 0, NULL, ''),
+(62, 7, 8, 'LSM-08', 'Keputusan Sertifikasi', 90, 0, 0, 0, 0, NULL, ''),
+(63, 7, 9, 'LSM-09', 'Sertifikat Terbit', 95, 0, 0, 1, 0, NULL, ''),
+(64, 7, 10, 'LSM-10', 'Invoice & Faktur', 98, 0, 0, 0, 1, NULL, '');
 
 -- services (7 baris)
 INSERT INTO `services` (`id`, `parent_id`, `code`, `name`, `description`, `bidang`, `cp_name`, `cp_phone`, `est_text`, `state`, `sort_order`, `is_active`) VALUES
@@ -703,32 +724,33 @@ INSERT INTO `services` (`id`, `parent_id`, `code`, `name`, `description`, `bidan
 (6, 2, 'KAL', 'Laboratorium Kalibrasi', 'Kalibrasi alat ukur di laboratorium atau on-site.', 'KAL', 'Layanan Pelanggan PSU', '+62 819-0834-4114', '3–10 hari kerja per alat', 'prep', 5, 1),
 (7, NULL, 'LSM', 'Lembaga Sistem Manajemen Mutu', 'Sertifikasi sistem manajemen mutu dan keamanan pangan untuk organisasi Anda.', NULL, NULL, NULL, NULL, 'prep', 6, 1);
 
--- settings (28 baris)
+-- settings (29 baris)
 INSERT INTO `settings` (`skey`, `svalue`) VALUES
 ('contact_email', 'psuindonesia.info@gmail.com'),
 ('contact_phone', '+62 819-0834-4114'),
-('migr:alur_1b', '2026-10-17 23:15:18'),
-('migr:alur_tahapan', '2026-10-17 23:15:18'),
-('migr:deskripsi_lab', '2026-10-17 23:15:18'),
-('migr:detail_text', '2026-10-17 23:15:18'),
-('migr:dokumen_1b', '2026-10-17 23:15:18'),
-('migr:dokumen_sp_2', '2026-10-17 23:15:18'),
-('migr:form_sp', '2026-10-17 23:15:18'),
-('migr:hapus_isian_spesifikasi_lab', '2026-10-17 23:15:18'),
-('migr:isian_nomor_tanggal', '2026-10-17 23:15:18'),
-('migr:jenis_permohonan', '2026-10-17 23:15:18'),
-('migr:kategori_sp', '2026-10-17 23:15:18'),
-('migr:kode_lacak', '2026-10-17 23:15:18'),
-('migr:kolom_2610', '2026-10-17 23:15:18'),
-('migr:layanan_lsm', '2026-10-17 23:15:18'),
-('migr:nib_npwp', '2026-10-17 23:15:18'),
-('migr:produk_luar_lingkup', '2026-10-17 23:15:18'),
-('migr:ruang_lingkup_lab', '2026-10-17 23:15:18'),
-('migr:status_batal', '2026-10-17 23:15:18'),
-('migr:status_sertifikat', '2026-10-17 23:15:18'),
-('migr:template_kop_nib_npwp', '2026-10-17 23:15:18'),
-('migr:unik_nomor_invoice', '2026-10-17 23:15:18'),
-('migr:urutan_lab', '2026-10-17 23:15:18'),
+('migr:alur_1b', '2026-10-22 22:01:44'),
+('migr:alur_tahapan', '2026-10-22 22:01:44'),
+('migr:deskripsi_lab', '2026-10-22 22:01:44'),
+('migr:detail_text', '2026-10-22 22:01:44'),
+('migr:dokumen_1b', '2026-10-22 22:01:44'),
+('migr:dokumen_sp_2', '2026-10-22 22:01:44'),
+('migr:form_sp', '2026-10-22 22:01:44'),
+('migr:hapus_isian_spesifikasi_lab', '2026-10-22 22:01:44'),
+('migr:isian_nomor_tanggal', '2026-10-22 22:01:44'),
+('migr:jenis_permohonan', '2026-10-22 22:01:44'),
+('migr:kategori_sp', '2026-10-22 22:01:44'),
+('migr:kode_lacak', '2026-10-22 22:01:44'),
+('migr:kolom_2610', '2026-10-22 22:01:44'),
+('migr:layanan_lsm', '2026-10-22 22:01:44'),
+('migr:nib_npwp', '2026-10-22 22:01:44'),
+('migr:penawaran_tagihan', '2026-10-22 22:01:44'),
+('migr:produk_luar_lingkup', '2026-10-22 22:01:44'),
+('migr:ruang_lingkup_lab', '2026-10-22 22:01:44'),
+('migr:status_batal', '2026-10-22 22:01:44'),
+('migr:status_sertifikat', '2026-10-22 22:01:44'),
+('migr:template_kop_nib_npwp', '2026-10-22 22:01:44'),
+('migr:unik_nomor_invoice', '2026-10-22 22:01:44'),
+('migr:urutan_lab', '2026-10-22 22:01:44'),
 ('survey_intro_KAL', 'Survei ini ditujukan kepada pelanggan yang telah menggunakan layanan Laboratorium Kalibrasi PSU. Penilaian Anda digunakan untuk mengevaluasi mutu pelayanan, penanganan alat, ketepatan waktu, dan kualitas sertifikat kalibrasi.'),
 ('survey_intro_LAB', 'Survei ini ditujukan kepada pelanggan yang telah menggunakan layanan Laboratorium Pengujian PSU. Penilaian Anda digunakan untuk mengevaluasi mutu pelayanan, komunikasi, ketepatan waktu, dan kualitas penyampaian hasil pengujian.'),
 ('survey_intro_SP', 'Survei ini ditujukan kepada pelanggan yang telah menggunakan layanan sertifikasi produk PSU. Penilaian Anda tidak memengaruhi keputusan sertifikasi dan digunakan semata-mata untuk evaluasi serta peningkatan mutu layanan.'),

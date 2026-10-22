@@ -21,7 +21,7 @@ const SILAPP_SQL = `SELECT c.id, 'silapp' source, c.certificate_no, c.issued_at,
     COALESCE((SELECT field_value FROM application_details d WHERE d.application_id=a.id AND d.field_key='kota_provinsi' LIMIT 1), '-') factory_address,
     COALESCE(p.name, a.product_label) product, COALESCE(p.standard_no, '-') sni_no
   FROM certificates c JOIN applications a ON a.id=c.application_id JOIN services s ON s.id=a.service_id JOIN users u ON u.id=a.user_id
-  LEFT JOIN products p ON p.id=a.product_id WHERE s.code='SP' AND a.status='selesai'`;
+  LEFT JOIN products p ON p.id=a.product_id WHERE s.code='SP' AND (a.status='selesai' OR EXISTS (SELECT 1 FROM billings bx WHERE bx.application_id=a.id))`; // terbit: selesai atau sudah di tahap Invoice & Faktur
 const LEGACY_SQL = `SELECT id, 'lama' source, certificate_no, issued_at, expires_at, status, show_in_directory, factory_name, factory_address, product, sni_no FROM legacy_certificates`;
 
 router.get('/', async (req, res, next) => {

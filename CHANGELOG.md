@@ -5,6 +5,35 @@ Pengembangan dimulai 29 September 2026 sebagai bagian dari OJT di PT Penilai Sta
 
 Penomoran versi: angka pertama naik untuk rilis yang siap dipakai, angka kedua untuk penambahan fitur, angka ketiga untuk perbaikan dan dokumentasi.
 
+## [2.1.0] – 2026-10-23
+
+Penyesuaian alur pembayaran sesuai permintaan PSU.
+
+### Ditambahkan
+
+- **Tahap Penawaran & Kontrak** (menggantikan tahap Pembayaran di semua layanan; di Kalibrasi tahap KAL-02 berganti nama). Admin memilih skema pembayaran dan mengunggah persetujuan penawaran / kontrak, lalu proforma invoice tetap diterbitkan otomatis:
+  - **Full di Awal**: dibayar penuh sebelum pekerjaan dimulai;
+  - **50 : 50**: DP 50% di tahap ini, pelunasan setelah sertifikat/LHU terbit;
+  - **Full di Akhir**: pekerjaan langsung berjalan, seluruh tagihan dibayar setelah sertifikat/LHU terbit.
+  Skema dicetak di proforma invoice dan bisa diubah selama pelanggan belum membayar.
+- **Tahap akhir Invoice & Faktur** di semua layanan, setelah sertifikat/LHU terbit:
+  - PSU mengunggah invoice dan faktur pajak (tidak dibuat otomatis) beserta catatan untuk pelanggan;
+  - pelanggan mengunggah **Bukti Bayar** pelunasan dan **Bukti Potong PPh 23**, boleh di waktu berbeda; pelanggan menerima pesan untuk juga mengirim bukti potong ke psuindonesia.info@gmail.com;
+  - Admin menyetujui atau menolak masing-masing; pengajuan selesai setelah keduanya lengkap;
+  - Bukti Bayar tidak diperlukan untuk skema Full di Awal; Bukti Potong tidak diperlukan bila Admin menandai tanpa potong PPh 23;
+  - untuk skema 50 : 50 dan Full di Akhir, sertifikat/LHU baru bisa diunduh setelah bukti bayar pelunasan disetujui (bukti potong tidak mengunci).
+- **Template Dokumen**: Admin dan Super Admin dapat menambah, mengganti (nama, keterangan, file), dan menghapus template. Format Word, PDF, dan Excel.
+- **Tanda tangan & stempel digital** di Pengaturan Umum → Identitas Proforma Invoice (PNG/JPG, maks. 1 MB), lengkap dengan pratinjau; dicetak otomatis di setiap proforma invoice.
+- **Isian tersimpan otomatis** di form Admin (proforma invoice, penawaran & kontrak, invoice & faktur, catatan tindakan) di perangkat yang sama, sehingga tidak hilang bila halaman tertutup.
+- **Sesi diperpanjang otomatis** selama aplikasi masih dipakai; keluar otomatis hanya bila tidak dipakai lebih dari 1 hari.
+- Pengujian otomatis baru `07-penawaran-tagihan` (skema 50 : 50 dengan PPh 23, Full di Akhir, pengajuan lama, template, tanda tangan, sesi, migrasi).
+
+### Diubah
+
+- Pengajuan yang sudah selesai sebelum pembaruan tetap selesai. Pengajuan yang sedang berjalan mengikuti alur baru; yang proforma-nya sudah terbit dianggap skema Full di Awal.
+- Directory, pengingat sertifikat berakhir, dan unduhan sertifikat memperlakukan sertifikat yang sudah terbit di tahap Invoice & Faktur sebagai sertifikat aktif.
+- Target progres tahap sertifikat/LHU menjadi 95%; tahap Invoice & Faktur 98%.
+
 ## [2.0.0] – 2026-10-17
 
 Rilis siap dipakai (live). Satu kode untuk komputer (XAMPP), cPanel, dan Vercel; perbedaannya hanya di pengaturan `.env`.

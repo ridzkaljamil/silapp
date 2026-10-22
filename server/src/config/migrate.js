@@ -46,6 +46,10 @@ const COLUMNS = [
   // masa berlaku sertifikat proyek sebelum SILAPP
   ['legacy_certificates', 'expires_at', 'DATE NULL AFTER issued_at'],
   ['legacy_certificates', 'show_in_directory', 'TINYINT(1) NOT NULL DEFAULT 1 AFTER status'],
+  // tahap Penawaran & Kontrak (skema bayar) dan tahap akhir Invoice & Faktur
+  ['service_steps', 'is_billing_step', 'TINYINT(1) NOT NULL DEFAULT 0 AFTER is_certificate_step'],
+  ['applications', 'payment_scheme', "ENUM('full','5050','akhir') NULL AFTER payment_status"],
+  ['payments', 'due_now', 'DECIMAL(14,2) NULL AFTER pph23'],
   // sesi login dicabut saat kata sandi diganti/di-reset (dibandingkan dengan isi token)
   ['users', 'token_version', 'INT NOT NULL DEFAULT 0 AFTER must_change_password'],
 ];
@@ -94,6 +98,15 @@ const TABLES = [
     id INT AUTO_INCREMENT PRIMARY KEY, kind VARCHAR(30) NOT NULL, ref_id INT NOT NULL, mark VARCHAR(30) NOT NULL,
     created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, UNIQUE KEY uq_reminder (kind, ref_id, mark)
   ) ENGINE=InnoDB`,
+  `CREATE TABLE IF NOT EXISTS billings (
+    application_id INT PRIMARY KEY, amount_due DECIMAL(14,2) NOT NULL DEFAULT 0, with_pph23 TINYINT(1) NOT NULL DEFAULT 0,
+    invoice_path VARCHAR(255) NULL, invoice_name VARCHAR(255) NULL, faktur_path VARCHAR(255) NULL, faktur_name VARCHAR(255) NULL,
+    note TEXT NULL, sent_at DATETIME NULL,
+    pay_status ENUM('tidak_perlu','belum','menunggu','disetujui','ditolak') NOT NULL DEFAULT 'belum', pay_path VARCHAR(255) NULL, pay_at DATETIME NULL, pay_note VARCHAR(500) NULL,
+    cut_status ENUM('tidak_perlu','belum','menunggu','disetujui','ditolak') NOT NULL DEFAULT 'belum', cut_path VARCHAR(255) NULL, cut_at DATETIME NULL, cut_note VARCHAR(500) NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP, completed_at DATETIME NULL,
+    CONSTRAINT fk_bill_app FOREIGN KEY (application_id) REFERENCES applications(id) ON DELETE CASCADE
+  ) ENGINE=InnoDB`,
 ];
 
 /* ---------- perubahan data satu kali (dicatat di tabel settings: migr:<nama>) ---------- */
@@ -116,6 +129,9 @@ const SP_1B = [['ST-01', 'Permohonan Diterima', 10, 0, 0], ['ST-02', 'Verifikasi
   ['ST-03', 'Penawaran, Kontrak & Pembayaran', 30, 1, 0], ['ST-04', 'Penjadwalan & Penugasan', 40, 0, 0],
   ['ST-05', 'Sampling', 50, 0, 0], ['ST-06', 'Pengujian Laboratorium', 65, 0, 0],
   ['ST-07', 'Review & Keputusan', 85, 0, 0], ['ST-08', 'Sertifikat Terbit', 100, 0, 1]];
+/** Nama tahap pembayaran & tahap akhir (revisi PSU Oktober 2026). */
+const OFFER = 'Penawaran & Kontrak';
+const BILL = 'Invoice & Faktur';
 /** Urutan alur utama (ST-01..ST-10) -> urutan alur Tipe 1b, untuk pengajuan 1b yang sudah berjalan. */
 const MAP_1B = { 1: 1, 2: 2, 3: 3, 4: 4, 5: 5, 6: 6, 7: 6, 8: 7, 9: 7, 10: 8 };
 /** Berkas SP yang tidak diperlukan untuk Tipe 1b (masukan demo PSU). */
@@ -221,8 +237,9 @@ const ONCE = {
   // pelanggan dapat membatalkan pengajuan yang belum diproses
   async status_batal() {
     await q("ALTER TABLE applications MODIFY status ENUM('aktif','aksi','ditolak','selesai','batal') NOT NULL DEFAULT 'aktif'");
+    // daftar lengkap (termasuk aksi yang ditambahkan belakangan) agar urutan migrasi apa pun tidak memotong data
     await q(`ALTER TABLE status_logs MODIFY action ENUM('buat','mulai','setujui','minta_tindakan','tanggapan','abaikan','tolak','bayar','parameter','terbit',
-      'invoice','lampiran','temuan','perpanjangan','unduh','survei','info','batal') NOT NULL`);
+      'invoice','lampiran','temuan','perpanjangan','unduh','survei','info','batal','kontrak','tagihan') NOT NULL`);
   },
   // dokumen persyaratan SP lama dikembalikan; ketiga surat template wajib untuk semua jenis permohonan
   async dokumen_sp_2() {
@@ -338,6 +355,25 @@ const ONCE = {
       await q('UPDATE doc_templates SET file_path=?, updated_at=NOW() WHERE id=?', [stored, t.id]);
       if (t.file_path !== stored) await storage.remove(t.file_path);
     }
+  },
+  // revisi PSU: tahap pembayaran menjadi "Penawaran & Kontrak" dan tahap akhir "Invoice & Faktur" setelah sertifikat/LHU terbit
+  async penawaran_tagihan() {
+    await q("ALTER TABLE applications MODIFY payment_status ENUM('belum','invoice','menunggu','terverifikasi','tunda') NOT NULL DEFAULT 'belum'");
+    await q(`ALTER TABLE status_logs MODIFY action ENUM('buat','mulai','setujui','minta_tindakan','tanggapan','abaikan','tolak','bayar','parameter','terbit',
+      'invoice','lampiran','temuan','perpanjangan','unduh','survei','info','batal','kontrak','tagihan') NOT NULL`);
+    await q('UPDATE service_steps SET name=? WHERE is_payment_step=1', [OFFER]);
+    // tiap alur tahapan mendapat tahap akhir; tahap yang semula 100% menjadi 95% (100% saat seluruh tahap selesai)
+    const flows = await q('SELECT service_id, flow, MAX(step_order) last, MAX(is_billing_step) has FROM service_steps GROUP BY service_id, flow');
+    for (const f of flows) {
+      if (f.has) continue;
+      const lastStep = await one('SELECT status_code FROM service_steps WHERE service_id=? AND flow=? AND step_order=?', [f.service_id, f.flow, f.last]);
+      const prefix = String(lastStep.status_code).replace(/-\d+$/, '');
+      await q('UPDATE service_steps SET progress_pct=95 WHERE service_id=? AND flow=? AND progress_pct>95', [f.service_id, f.flow]);
+      await q(`INSERT INTO service_steps (service_id, step_order, status_code, name, progress_pct, is_billing_step, flow) VALUES (?,?,?,?,98,1,?)`,
+        [f.service_id, f.last + 1, `${prefix}-${String(f.last + 1).padStart(2, '0')}`, BILL, f.flow]);
+    }
+    // pengajuan lama yang proforma-nya sudah terbit dianggap skema Full di Awal
+    await q("UPDATE applications SET payment_scheme='full' WHERE payment_scheme IS NULL AND payment_status IN ('invoice','menunggu','terverifikasi')");
   },
 };
 

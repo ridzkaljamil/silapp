@@ -57,6 +57,8 @@ module.exports = {
     let a = await step();
     if (a.current_step.code === 'LAB-02') { await act({ sample_code: 'NPK-01' }); a = await step(); }
     ok(a.current_step.is_payment_step, `sampai tahap pembayaran (${a.current_step.code})`);
+    r = await t.offer(al, id, a.current_step.order, 'full');
+    ok(r.s === 200, `penawaran & kontrak ${r.s} ${r.j.message || ''}`);
     r = await call(al, 'POST', `/admin/applications/${id}/invoice`, { step: a.current_step.order, items: [], custom_prices: {}, with_pph23: false });
     ok(r.s === 200 && /^001\/PSU\/KIM\/[IVX]+\/\d{4}$/.test(r.j.payment?.invoice_no || ''), `invoice pertama 001 (${r.j.payment?.invoice_no} ${r.j.message || ''})`);
     const inv = await t.raw(cu, `/applications/${id}/invoice`);
@@ -66,14 +68,14 @@ module.exports = {
     r = await call(al, 'POST', `/admin/applications/${id}/payment/verify`, { step: a.current_step.order, valid: true }); ok(r.s === 200, `verifikasi ${r.s} ${r.j.message || ''}`);
     for (let guard = 0; guard < 10; guard++) {
       a = await step();
-      if (a.status === 'selesai') break;
+      if (a.current_step.is_billing_step) break;
       for (const p of a.parameters || []) if (p.status !== 'selesai') await call(al, 'PATCH', `/admin/applications/${id}/parameters/${p.id}`, { status: 'selesai' });
       const extra = a.current_step.is_certificate_step ? { certificate_no: 'LHU-UJI-0001', certificate: pdf() } : {};
       r = await t.approve(al, id, a.current_step.order, extra);
       if (r.s !== 200) { ok(false, `tahap ${a.current_step.code}: ${r.s} ${r.j.message}`); break; }
     }
     a = await step();
-    ok(a.status === 'selesai', `pengajuan selesai (${a.status} ${a.current_step.code})`);
+    ok(a.status === 'aktif' && a.current_step.code === 'LAB-08' && a.work_done, `LHU terbit → tahap Invoice & Faktur (${a.status} ${a.current_step.code})`);
     ok((await call(cu, 'GET', `/applications/${id}/certificate`)).s === 403, 'LHU terkunci sebelum survei');
     const sv = (await call(cu, 'GET', `/applications/${id}/survey`)).j;
     const scores = Object.fromEntries((sv.questions || []).map((q) => [q.id, 5]));
@@ -84,5 +86,8 @@ module.exports = {
     const lhu = await t.raw(cu, `/applications/${id}/certificate`);
     ok(lhu.s === 200 && lhu.buf.slice(0, 4).toString() === '%PDF', `unduh LHU ${lhu.s}`);
     ok((await t.raw(sa, '/superadmin/survey/export?format=xlsx')).s === 200, 'ekspor survei');
+    // skema Full tanpa PPh 23: tahap akhir selesai begitu invoice & faktur dikirim
+    r = await t.billing(al, id, a.current_step.order, { note: 'Terima kasih.' });
+    ok(r.s === 200 && r.j.status === 'selesai' && r.j.billing.pay.status === 'tidak_perlu' && r.j.billing.cut.status === 'tidak_perlu', `invoice & faktur → selesai (${r.s} ${r.j.status} ${r.j.message || ''})`);
   },
 };

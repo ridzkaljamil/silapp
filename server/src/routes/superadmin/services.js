@@ -2,6 +2,52 @@
 const router = require('express').Router();
 const { q } = require('../../config/db');
 const { setSetting, getSettings, INVOICE_KEYS } = require('../../utils/settings');
+const { makeUpload } = require('../../utils/upload');
+const storage = require('../../utils/storage');
+
+/* ---------- tanda tangan & stempel di proforma invoice ---------- */
+const IMG = { ttd: 'invoice_signature', stempel: 'invoice_stamp' };
+const imgUpload = makeUpload({ allowed: ['.png', '.jpg', '.jpeg'], maxMB: 1, message: 'Gambar harus PNG atau JPG.', prefix: 'ttd-' });
+const imgKey = (req, res) => {
+  const k = IMG[req.params.kind];
+  if (!k) res.status(404).json({ message: 'Jenis gambar tidak dikenal.' });
+  return k;
+};
+
+/** Ada/tidaknya gambar; v berubah setiap gambar diganti (untuk melewati cache browser). */
+router.get('/invoice-images', async (req, res, next) => {
+  try {
+    const s = await getSettings(Object.values(IMG));
+    res.json(Object.fromEntries(Object.entries(IMG).map(([k, key]) => [k, s[key] ? storage.version(s[key]) : null])));
+  } catch (e) { next(e); }
+});
+router.get('/invoice-images/:kind', async (req, res, next) => {
+  try {
+    const key = imgKey(req, res); if (!key) return;
+    const v = (await getSettings([key]))[key];
+    if (!v) return res.status(404).json({ message: 'Gambar belum diunggah.' });
+    await storage.send(res, v, null, { inline: true, cache: 'private, max-age=86400' });
+  } catch (e) { next(e); }
+});
+router.post('/invoice-images/:kind', imgUpload.single('image'), async (req, res, next) => {
+  try {
+    const key = imgKey(req, res); if (!key) return;
+    if (!req.file) return res.status(400).json({ message: 'Pilih gambar PNG atau JPG.' });
+    const old = (await getSettings([key]))[key];
+    await setSetting(key, req.file.filename);
+    if (old && old !== req.file.filename) await storage.remove(old);
+    res.json({ ok: true, v: storage.version(req.file.filename) });
+  } catch (e) { next(e); }
+});
+router.delete('/invoice-images/:kind', async (req, res, next) => {
+  try {
+    const key = imgKey(req, res); if (!key) return;
+    const old = (await getSettings([key]))[key];
+    await setSetting(key, '');
+    if (old) await storage.remove(old);
+    res.json({ ok: true });
+  } catch (e) { next(e); }
+});
 
 /* ---------- master layanan ---------- */
 router.get('/services', async (req, res, next) => {

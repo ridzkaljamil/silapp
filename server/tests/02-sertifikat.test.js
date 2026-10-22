@@ -108,7 +108,7 @@ module.exports = {
     r = await issue({ issued_at: plus(td, 1), expires_at: plus(td, 900) }); ok(r.s === 400 && /hari ini/.test(r.j.message), 'terbit masa depan ditolak');
     r = await issue({ issued_at: td, expires_at: td }); ok(r.s === 400 && /setelah/.test(r.j.message), 'berakhir = terbit ditolak');
     r = await issue({ issued_at: plus(td, -3), expires_at: plus(td, 1457) });
-    ok(r.s === 200 && r.j.status === 'selesai' && r.j.certificate.expires_at === plus(td, 1457) && r.j.certificate.issued_at === plus(td, -3), `terbit SP dengan tanggal (${r.s} ${r.j.message || ''})`);
+    ok(r.s === 200 && r.j.status === 'aktif' && r.j.current_step.is_billing_step && r.j.work_done && r.j.certificate.expires_at === plus(td, 1457) && r.j.certificate.issued_at === plus(td, -3), `terbit SP dengan tanggal (${r.s} ${r.j.message || ''})`);
     const dir = (await call(null, 'GET', '/public/directory')).j.find((x) => x.certificate_no === 'PSU-SPPT-UJI-9001');
     ok(dir && dir.state === 'aktif' && dir.expires_at === plus(td, 1457), 'tampil di directory dengan tanggal berakhir');
     const newCert = (await certs()).find((x) => x.certificate_no === 'PSU-SPPT-UJI-9001');

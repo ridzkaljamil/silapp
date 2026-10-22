@@ -382,3 +382,14 @@ a.kpi:hover .kpi-go { transform: translateX(2px); }
 .inv-row { display: grid; grid-template-columns: 28px minmax(0, 1fr) auto; gap: 8px; align-items: start; }
 .inv-calc { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 13px; }
 .inv-calc .inv-qty { width: 64px; } .inv-calc .inv-unit { width: 90px; } .inv-calc .inv-amt { width: 170px; }
+
+/* Pengaturan Umum: tanda tangan & stempel proforma invoice */
+.sig-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 20px; }
+.sig-box { height: 140px; border: 1px dashed var(--line); border-radius: 12px; display: grid; place-items: center; background: repeating-conic-gradient(#F8FAFC 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+.sig-box img { max-height: 120px; max-width: 90%; }
+.sig-paper { border: 1px solid var(--line); border-radius: 8px; background: #fff; padding: 18px; text-align: right; font-family: Helvetica, Arial, sans-serif; font-size: 12px; line-height: 1.5; color: #111; }
+.sig-img { position: relative; height: 86px; margin: 4px 0; }
+.sig-img img { position: absolute; right: 0; bottom: 0; max-height: 86px; max-width: 170px; }
+.sig-img img.st { right: 40px; }
+.sig-name { text-decoration: underline; }
+

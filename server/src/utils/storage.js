@@ -55,6 +55,15 @@ async function stream(key) {
   return r?.statusCode === 200 ? Readable.fromWeb(r.stream) : null;
 }
 
+/** Isi file sebagai Buffer (mis. gambar tanda tangan untuk PDF), atau null jika tidak ada. */
+async function buffer(key) {
+  const s = await stream(key);
+  if (!s) return null;
+  const chunks = [];
+  for await (const c of s) chunks.push(c);
+  return Buffer.concat(chunks);
+}
+
 /**
  * Kirim file ke browser. inline=true untuk gambar (foto profil), selain itu sebagai unduhan dengan nama asli.
  * Jika file hilang, balas 404 berbahasa Indonesia.
@@ -121,4 +130,4 @@ async function clearAll() {
 /** Sidik pendek kunci file (untuk ?v= di URL foto profil: penanda cache sekaligus mencegah tebak-tebakan id). */
 const version = (key) => crypto.createHash('sha256').update(String(key)).digest('hex').slice(0, 12);
 
-module.exports = { version, sendLarge, MAX_MB, IS_BLOB, UPLOAD_DIR, PREFIX, randomName, validBlobKey, save, stream, send, remove, clearAll };
+module.exports = { version, buffer, sendLarge, MAX_MB, IS_BLOB, UPLOAD_DIR, PREFIX, randomName, validBlobKey, save, stream, send, remove, clearAll };

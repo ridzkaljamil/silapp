@@ -39,7 +39,7 @@ async function certReminders() {
   // sertifikat SILAPP: pelanggan (email + notifikasi) dan Admin SP
   const silapp = await q(`SELECT c.id, c.application_id, c.certificate_no, c.expires_at, DATEDIFF(c.expires_at, CURDATE()) days_left
       FROM certificates c JOIN applications a ON a.id=c.application_id JOIN services s ON s.id=a.service_id
-     WHERE s.code='SP' AND a.status='selesai' AND c.status<>'dicabut' AND c.expires_at IS NOT NULL
+     WHERE s.code='SP' AND (a.status='selesai' OR EXISTS (SELECT 1 FROM billings bx WHERE bx.application_id=a.id)) AND c.status<>'dicabut' AND c.expires_at IS NOT NULL
        AND c.expires_at BETWEEN CURDATE() - INTERVAL 7 DAY AND CURDATE() + INTERVAL 90 DAY`);
   const legacy = await q(`SELECT id, certificate_no, factory_name, expires_at, DATEDIFF(expires_at, CURDATE()) days_left FROM legacy_certificates
      WHERE status<>'dicabut' AND expires_at BETWEEN CURDATE() - INTERVAL 7 DAY AND CURDATE() + INTERVAL 90 DAY`);

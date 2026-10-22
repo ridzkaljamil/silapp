@@ -48,17 +48,17 @@ export function LogList({ logs, onDownloadDoc, limit }) {
 
 /** Label pendek per kode tahap untuk bar progres (nama lengkap tetap di tooltip & "Lihat Semua Tahap"). */
 const SHORT = {
-  'ST-01': 'Permohonan', 'ST-02': 'Verifikasi', 'ST-03': 'Kontrak & Bayar', 'ST-04': 'Penjadwalan', 'ST-05': 'Audit',
+  'ST-01': 'Permohonan', 'ST-02': 'Verifikasi', 'ST-03': 'Penawaran & Kontrak', 'ST-04': 'Penjadwalan', 'ST-05': 'Audit',
   'ST-06': 'Uji Lab', 'ST-07': 'Perbaikan', 'ST-08': 'Review', 'ST-09': 'Keputusan', 'ST-10': 'Sertifikat',
-  'LAB-01': 'Permohonan', 'LAB-02': 'Registrasi Sampel', 'LAB-03': 'Kontrak & Bayar', 'LAB-04': 'Pengujian',
+  'LAB-01': 'Permohonan', 'LAB-02': 'Registrasi Sampel', 'LAB-03': 'Penawaran & Kontrak', 'LAB-04': 'Pengujian',
   'LAB-05': 'Review', 'LAB-06': 'Penyusunan LHU', 'LAB-07': 'LHU Terbit',
-  'LSM-01': 'Permohonan', 'LSM-02': 'Verifikasi', 'LSM-03': 'Kontrak & Bayar', 'LSM-04': 'Penjadwalan', 'LSM-05': 'Audit',
+  'LSM-01': 'Permohonan', 'LSM-02': 'Verifikasi', 'LSM-03': 'Penawaran & Kontrak', 'LSM-04': 'Penjadwalan', 'LSM-05': 'Audit',
   'LSM-06': 'Perbaikan', 'LSM-07': 'Review', 'LSM-08': 'Keputusan', 'LSM-09': 'Sertifikat',
-  'KAL-01': 'Permohonan', 'KAL-02': 'Kontrak & Bayar', 'KAL-03': 'Registrasi', 'KAL-04': 'Persiapan', 'KAL-05': 'Kalibrasi',
+  'KAL-01': 'Permohonan', 'KAL-02': 'Penawaran & Kontrak', 'KAL-03': 'Registrasi', 'KAL-04': 'Persiapan', 'KAL-05': 'Kalibrasi',
   'KAL-06': 'Review', 'KAL-07': 'Penerbitan', 'KAL-08': 'Sertifikat', 'KAL-09': 'Pengembalian',
 };
 /** Alur Tipe 1b memakai kode ST-xx dengan nama tahap berbeda, jadi beberapa label pendek dicocokkan lewat nama. */
-const SHORT_NAME = { Sampling: 'Sampling', 'Review & Keputusan': 'Review & Keputusan', 'Sertifikat Terbit': 'Sertifikat', 'Pengujian Laboratorium': 'Uji Lab' };
+const SHORT_NAME = { 'Invoice & Faktur': 'Invoice & Faktur', 'Penawaran & Kontrak': 'Penawaran & Kontrak', Sampling: 'Sampling', 'Review & Keputusan': 'Review & Keputusan', 'Sertifikat Terbit': 'Sertifikat', 'Pengujian Laboratorium': 'Uji Lab' };
 const shortStep = (s) => SHORT_NAME[s.name] || SHORT[s.code] || s.name;
 
 const NOW = ['current', 'action', 'closed'];

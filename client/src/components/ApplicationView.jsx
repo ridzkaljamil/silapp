@@ -8,6 +8,7 @@ import { StatusPill, StepTrack, StepLegend, StepsList, LogList, fmtDate, rupiah 
 import { Sheet } from './overlays';
 import { docWord, CERT_STATE } from '../lib/constants';
 import { SlaLate } from './AppTable';
+import { OfferPanel, BillingPanel, SchemeRows, schemeLabel } from './PaymentPanels';
 
 const PST = { antri: ['pill-progress', 'Antrian'], uji: ['pill-action', 'Dalam Pengujian'], selesai: ['pill-done', 'Selesai'] };
 const CAT = { mayor: 'Mayor', minor: 'Minor', observasi: 'Observasi' };
@@ -117,7 +118,7 @@ function FindingsPanel({ app, renderActions, extra, onDownloadDoc }) {
 /**
  * Rincian invoice sesuai format PSU: harga pekerjaan, DPP nilai lain, PPN 12%, total, PPh 23 (jika dipotong), grand total.
  */
-function InvoiceView({ p, onDownloadInvoice, onDownloadProof }) {
+function InvoiceView({ p, scheme, onDownloadInvoice, onDownloadProof }) {
   if (!p) return null;
   return (
     <div className="small">
@@ -132,7 +133,8 @@ function InvoiceView({ p, onDownloadInvoice, onDownloadProof }) {
           <tr><td className="text-muted2">PPN 12%</td><td className="text-end num">{rupiah(p.ppn)}</td></tr>
           <tr><td className="text-muted2">Total</td><td className="text-end num">{rupiah(p.total)}</td></tr>
           {p.pph23 > 0 && <tr><td className="text-muted2">PPh 23 (2% × harga, dipotong)</td><td className="text-end num">−{rupiah(p.pph23)}</td></tr>}
-          <tr><th>Grand Total (Dibayar)</th><th className="text-end num">{rupiah(p.amount)}</th></tr>
+          <tr><th>Grand Total</th><th className="text-end num">{rupiah(p.amount)}</th></tr>
+          <SchemeRows p={p} scheme={scheme} />
         </tbody>
       </table>
       {p.due_date && <div>Jatuh tempo: <b>{fmtDate(p.due_date)}</b></div>}
@@ -145,8 +147,8 @@ function InvoiceView({ p, onDownloadInvoice, onDownloadProof }) {
   );
 }
 
-const PAY = { belum: 'Proforma invoice belum terbit', invoice: 'Menunggu pembayaran', menunggu: 'Bukti bayar diverifikasi', terverifikasi: 'Lunas' };
-const PAYPILL = { belum: 'pill-progress', invoice: 'pill-action', menunggu: 'pill-action', terverifikasi: 'pill-done' };
+const PAY = { belum: 'Proforma invoice belum terbit', invoice: 'Menunggu pembayaran', menunggu: 'Bukti bayar diverifikasi', terverifikasi: 'Lunas', tunda: 'Dibayar setelah terbit' };
+const PAYPILL = { belum: 'pill-progress', invoice: 'pill-action', menunggu: 'pill-action', terverifikasi: 'pill-done', tunda: 'pill-progress' };
 
 /** Daftar dokumen dengan tombol unduh. */
 function DocList({ list, admin, onDownloadDoc }) {
@@ -222,7 +224,8 @@ function LabInfoCard({ app, onDownloadDoc, empty }) {
  * - kiri: tab Ringkasan/Temuan/Dokumen/Invoice/Riwayat · kanan: kartu keputusan, pemohon & invoice ringkas
  * Props: headerActions, mobileBar, decision {title, body}, main (panel tambahan di Ringkasan), children (panel paling bawah Ringkasan)
  */
-export default function ApplicationView({ app, backTo, admin, headerActions, mobileBar, decision, main, labPanel, onParam, onDownloadDoc, onDownloadInvoice, onDownloadProof, findingActions, findingsExtra, children, tab: tabProp, onTab }) {
+export default function ApplicationView({ app, backTo, admin, headerActions, mobileBar, decision, main, labPanel, onParam, onDownloadDoc, onDownloadInvoice, onDownloadProof, findingActions, findingsExtra, children, tab: tabProp, onTab,
+  onOfferEdit, onBillingEdit, onBillingUpload, onBillingDownload }) {
   const [tabState, setTabState] = useState('ringkasan');
   const tab = tabProp ?? tabState;
   const setTab = (t) => { (onTab || setTabState)(t); };
@@ -245,7 +248,7 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
     ...(showLab ? [['lab', 'Pengujian Lab']] : []),
     ...(showFindings ? [['temuan', 'Temuan', openF.length, openF.length > 0]] : []),
     ['dokumen', 'Dokumen', app.documents.length],
-    ...(app.payment ? [['invoice', 'Proforma Invoice']] : []),
+    ...(app.payment || app.billing ? [['invoice', app.billing ? 'Invoice' : 'Proforma Invoice']] : []),
     ['riwayat', 'Riwayat'],
   ];
   const pabrik = [detailOf(app, 'kota_provinsi'), detailOf(app, 'provinsi_pabrik')].filter(Boolean).join(', ') || detailOf(app, 'alamat_pabrik');
@@ -271,7 +274,7 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
       {decision && !decision.quiet && <div className="decision-m">{decision.body}</div>}
       {app.status === 'ditolak' && <div className="alert alert-danger mb-3"><b>Pengajuan ditutup.</b> {app.reject_note}</div>}
       {app.status === 'batal' && <div className="alert alert-secondary mb-3"><b>Pengajuan dibatalkan pelanggan.</b> {app.reject_note}</div>}
-      {app.status === 'selesai' && app.certificate && <div className={`alert ${app.certificate.state === 'aktif' ? 'alert-success' : 'alert-warning'} mb-3`}><b>{docName} {app.certificate.certificate_no}</b> terbit {fmtDate(app.certificate.issued_at)}{app.certificate.expires_at && <>, berlaku sampai {fmtDate(app.certificate.expires_at)}</>}.{app.certificate.state !== 'aktif' && CERT_STATE[app.certificate.state] && <> Status: <b>{CERT_STATE[app.certificate.state][1]}</b>.</>}{app.certificate.status_note && <> Alasan: {app.certificate.status_note}</>}{!app.survey_done && app.certificate.can_download !== false && (admin ? ' Pelanggan belum mengisi survei kepuasan.' : ' Isi survei kepuasan untuk mengunduh dokumen.')}</div>}
+      {app.work_done && app.certificate && <div className={`alert ${app.certificate.state === 'aktif' ? 'alert-success' : 'alert-warning'} mb-3`}><b>{docName} {app.certificate.certificate_no}</b> terbit {fmtDate(app.certificate.issued_at)}{app.certificate.expires_at && <>, berlaku sampai {fmtDate(app.certificate.expires_at)}</>}.{app.certificate.state !== 'aktif' && CERT_STATE[app.certificate.state] && <> Status: <b>{CERT_STATE[app.certificate.state][1]}</b>.</>}{app.certificate.status_note && <> Alasan: {app.certificate.status_note}</>}{!app.survey_done && app.certificate.locked !== 'dicabut' && (admin ? ' Pelanggan belum mengisi survei kepuasan.' : ' Isi survei kepuasan untuk mengunduh dokumen.')}{app.certificate.locked === 'pelunasan' && ' Dokumen dapat diunduh setelah bukti bayar pelunasan disetujui PSU.'}</div>}
 
       <section className="panel panel-b mb-4 d-flex flex-column gap-3 prog-panel" aria-label="Progres">
         <div className="d-flex justify-content-between align-items-center flex-wrap gap-2">
@@ -300,6 +303,8 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
           {tab === 'ringkasan' && (
             <>
               {showFindings && (openF.length > 0 || findingsExtra || app.findings.some((f) => f.status !== 'ditutup')) && <FindingsPanel app={app} renderActions={findingActions} extra={findingsExtra} onDownloadDoc={onDownloadDoc} />}
+              {app.current_step.is_payment_step && ['aktif', 'aksi'].includes(app.status) && <OfferPanel app={app} onEdit={onOfferEdit} onDownloadDoc={onDownloadDoc} />}
+              {app.billing && app.current_step.is_billing_step && app.status !== 'selesai' && <BillingPanel app={app} admin={admin} onEdit={onBillingEdit} onUpload={onBillingUpload} onDownload={onBillingDownload} />}
               {main}
               <section className="panel">
                 <div className="panel-h"><h2 className="mb-0">Aktivitas Terbaru</h2><button className="btn btn-link btn-sm p-0 fw-semibold" style={{ minHeight: 0 }} onClick={() => setTab('riwayat')}>Lihat Semua</button></div>
@@ -317,11 +322,16 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
               {fromCustomer.length > 0 && <div><div className="eyebrow mb-2">{admin ? 'Dari pelanggan' : 'Dokumen Anda'}</div><DocList list={fromCustomer} admin={admin} onDownloadDoc={onDownloadDoc} /></div>}
             </section>
           )}
-          {tab === 'invoice' && app.payment && (
-            <section className="panel">
-              <div className="panel-h"><h2 className="mb-0">Proforma Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
-              <div className="panel-b"><InvoiceView p={app.payment} onDownloadInvoice={onDownloadInvoice} onDownloadProof={onDownloadProof} /></div>
-            </section>
+          {tab === 'invoice' && (
+            <>
+              {app.billing && <BillingPanel app={app} admin={admin} onEdit={app.status !== 'selesai' ? onBillingEdit : undefined} onUpload={app.status !== 'selesai' ? onBillingUpload : undefined} onDownload={onBillingDownload} />}
+              {app.payment && (
+                <section className="panel">
+                  <div className="panel-h"><h2 className="mb-0">Proforma Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
+                  <div className="panel-b"><InvoiceView p={app.payment} scheme={app.payment_scheme} onDownloadInvoice={onDownloadInvoice} onDownloadProof={onDownloadProof} /></div>
+                </section>
+              )}
+            </>
           )}
           {tab === 'riwayat' && (
             <section className="panel">
@@ -372,7 +382,8 @@ export default function ApplicationView({ app, backTo, admin, headerActions, mob
             <section className="panel panel-b inv-mini">
               <div className="d-flex justify-content-between align-items-center gap-2"><h2 className="mb-0">Proforma Invoice</h2><span className={`pill ${PAYPILL[app.payment_status]}`}>{PAY[app.payment_status]}</span></div>
               <div className="amt num">{rupiah(app.payment.amount)}</div>
-              <div className="small text-muted2"><span className="mono">{app.payment.invoice_no}</span> · termasuk PPN{app.payment.pph23 > 0 ? ', dipotong PPh 23' : ''}{app.payment.due_date && app.payment_status !== 'terverifikasi' && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}</div>
+              <div className="small text-muted2"><span className="mono">{app.payment.invoice_no}</span> · termasuk PPN{app.payment.pph23 > 0 ? ', dipotong PPh 23' : ''}{app.payment.due_date && app.payment_status !== 'terverifikasi' && app.payment_status !== 'tunda' && <> · jatuh tempo {fmtDate(app.payment.due_date)}</>}</div>
+              {app.payment_scheme && app.payment_scheme !== 'full' && <div className="small">Skema <b>{schemeLabel(app.payment_scheme)}</b>: {app.payment.due_now > 0 ? <>DP <b className="num">{rupiah(app.payment.due_now)}</b>, sisa setelah terbit</> : 'dibayar setelah sertifikat/LHU terbit'}.</div>}
               <button type="button" className="btn btn-link btn-sm p-0 mt-1 fw-semibold align-self-start" style={{ minHeight: 0 }} onClick={() => setTab('invoice')}>Lihat Rincian</button>
             </section>
           ) : app.current_step.is_payment_step && (

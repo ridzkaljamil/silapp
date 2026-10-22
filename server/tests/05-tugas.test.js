@@ -41,6 +41,7 @@ module.exports = {
     await t.sql('UPDATE certificates SET expires_at=? WHERE id=?', [plus(td, 20), cert.id]);
     await t.sql("UPDATE legacy_certificates SET expires_at=? WHERE certificate_no='PSU-SPPT-2023-0012'", [plus(td, 60)]);
     const sp = appNo('PSU-SP-2610-0002');
+    await t.offer(sa, sp.id, 3, 'full');
     let r = await call(sa, 'POST', `/admin/applications/${sp.id}/invoice`, { step: 3, items: [{ label: 'Sertifikasi', qty: 1, price: 1000000 }], with_pph23: false });
     ok(r.s === 200, `terbit invoice ${r.s} ${r.j.message || ''}`);
     await t.sql("UPDATE payments SET due_date=? WHERE application_id=? AND status='invoice'", [plus(td, -2), sp.id]);

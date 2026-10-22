@@ -352,3 +352,14 @@ a.panel:hover { box-shadow: var(--shadow-hover); }
 
 /* Melewati target SLA tahap (Antrean, Dashboard, detail Admin) */
 .sla-late { display: inline-flex; align-items: center; gap: 4px; margin-top: 4px; font-size: 12px; font-weight: 600; color: var(--bad); white-space: nowrap; }
+
+/* Tahap Invoice & Faktur: baris bukti bayar / bukti potong */
+.bill-row { border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+
+/* Penawaran & Kontrak: pilihan skema pembayaran */
+.scheme-opts { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 10px; }
+.scheme-opt { display: flex; gap: 10px; align-items: flex-start; border: 1px solid var(--line); border-radius: 12px; padding: 12px; cursor: pointer; }
+.scheme-opt.on { border-color: var(--navy); background: var(--chip); }
+.scheme-opt input { margin-top: 3px; accent-color: var(--navy); }
+.scheme-opt b { display: block; }
+.scheme-opt small { display: block; color: var(--muted); line-height: 1.4; }

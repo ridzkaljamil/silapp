@@ -4,16 +4,24 @@ const { appUrl } = require('../../utils/mailer');
 const { todayJkt, checkDates } = require('../../utils/certificate');
 const { httpError, tgl, is1BFlow, stepOf, isLabTesting, docWord, assertOpen, addLog, saveDocs, notify, isSkipped, setStep } = require('./core');
 
+/** Pesan bila tahap Penawaran & Kontrak belum boleh disetujui. */
+function paymentBlock(app) {
+  if (['terverifikasi', 'tunda'].includes(app.payment_status)) return null; // lunas di awal / DP diterima / skema Full di Akhir
+  if (app.payment_status === 'belum') {
+    return app.payment_scheme ? 'Terbitkan proforma invoice terlebih dahulu.' : 'Atur skema pembayaran dan unggah persetujuan penawaran / kontrak terlebih dahulu.';
+  }
+  return app.payment_status === 'invoice' ? 'Pelanggan belum mengunggah bukti bayar untuk proforma invoice ini.' : 'Periksa dan verifikasi bukti bayar terlebih dahulu.';
+}
+
 /* ------------------------- AKSI ADMIN ------------------------- */
 
 async function approve(app, user, { note, internal, certificateNo, certFile, issuedAt, expiresAt, files, docName, auto } = {}) {
   assertOpen(app);
   const st = stepOf(app);
 
-  if (st.is_payment_step && app.payment_status !== 'terverifikasi') {
-    throw httpError(400, app.payment_status === 'belum' ? 'Terbitkan proforma invoice terlebih dahulu, lalu tunggu pelanggan mengunggah bukti bayar.'
-      : app.payment_status === 'invoice' ? 'Pelanggan belum mengunggah bukti bayar untuk proforma invoice ini.'
-        : 'Periksa dan verifikasi bukti bayar terlebih dahulu.');
+  if (st.is_payment_step && paymentBlock(app)) throw httpError(400, paymentBlock(app));
+  if (st.is_billing_step) {
+    throw httpError(400, 'Tahap Invoice & Faktur selesai otomatis setelah invoice, faktur pajak, bukti bayar, dan bukti potong (bila ada) lengkap disetujui.');
   }
   if (isLabTesting(app) && st.status_code === 'LAB-04') {
     const open = await one('SELECT COUNT(*) n FROM application_parameters WHERE application_id=? AND status<>"selesai"', [app.id]);
@@ -53,28 +61,41 @@ async function approve(app, user, { note, internal, certificateNo, certFile, iss
     app.nc_flag = 1;
   }
 
-  // tentukan tahap berikutnya
-  const last = app.steps[app.steps.length - 1].step_order;
+  // tentukan tahap berikutnya (tahap akhir Invoice & Faktur tidak dihitung sebagai tahap pekerjaan)
+  const billing = app.steps.find((s) => s.is_billing_step);
+  const last = billing ? billing.step_order - 1 : app.steps[app.steps.length - 1].step_order;
   let next = app.current_step_order + 1;
   while (next <= last && isSkipped(app, stepOf(app, next))) next++;
   const onsiteDone = app.service_code === 'KAL' && app.location === 'onsite' && st.status_code === 'KAL-08';
 
   if (next > last || onsiteDone) {
-    await q('UPDATE applications SET status="selesai", action_note=NULL WHERE id=?', [app.id]);
-    await notifyIssued(app);
+    await finishWork(app, user, billing);
     return;
   }
   const nextStep = stepOf(app, next);
   const certIssued = app.steps.some((s) => s.is_certificate_step && s.step_order < next);
   await setStep(app, next, user);
   if (next === last && !nextStep.is_optional && certIssued && app.service_code !== 'KAL') {
-    // LAB-07: LHU terbit = selesai otomatis
-    await q('UPDATE applications SET status="selesai" WHERE id=?', [app.id]);
-    await notifyIssued(app);
+    // LAB-07: LHU terbit = pekerjaan selesai otomatis, lanjut ke tahap Invoice & Faktur
+    await finishWork(app, user, billing);
     return;
   }
   await notify(app, `Status: ${nextStep.status_code} ${nextStep.name}`,
     `Pengajuan Anda masuk tahap ${nextStep.status_code} · ${nextStep.name} (progres ${nextStep.progress_pct}%).`);
+}
+
+/**
+ * Pekerjaan selesai (sertifikat/LHU terbit): kabari pelanggan, lalu masuk tahap Invoice & Faktur.
+ * Layanan tanpa tahap itu langsung selesai.
+ */
+async function finishWork(app, user, billing) {
+  await notifyIssued(app);
+  if (!billing) {
+    await q('UPDATE applications SET status="selesai", action_note=NULL WHERE id=?', [app.id]);
+    return;
+  }
+  await setStep(app, billing.step_order, user);
+  await require('./billing').openBilling(app);
 }
 
 /** Email pertama setelah terbit: minta isi survei (mengikuti alur email SPPT SNI BSN). */
@@ -83,7 +104,9 @@ function notifyIssued(app) {
   return notify(app, `${w} telah terbit`,
     `Dengan hormat, kami informasikan bahwa ${w.toLowerCase()} untuk pengajuan ${app.service_name} (${app.product_label}) telah terbit.\n\n` +
     `Untuk memperoleh dokumen ${w.toLowerCase()}, mohon terlebih dahulu mengisi Survei Kepuasan Pelanggan melalui akun SILAPP Anda:\n${appUrl()}/klien/pengajuan/${app.id}\n\n` +
-    'Catatan: survei wajib diisi untuk setiap penerbitan dokumen, termasuk bagi pelanggan yang sudah pernah mengisi survei sebelumnya.');
+    'Catatan: survei wajib diisi untuk setiap penerbitan dokumen, termasuk bagi pelanggan yang sudah pernah mengisi survei sebelumnya.' +
+    (app.payment_scheme && app.payment_scheme !== 'full'
+      ? `\n\nSesuai skema pembayaran, ${w.toLowerCase()} dapat diunduh setelah pelunasan diterima PSU. Invoice dan faktur pajak akan kami kirimkan melalui SILAPP.` : ''));
 }
 
 async function requestAction(app, user, note, { files, docName } = {}) {
@@ -112,6 +135,7 @@ async function ignore(app, user, note, internal, { files, docName } = {}) {
 async function reject(app, user, note, { files, docName } = {}) {
   if (!note) throw httpError(400, 'Alasan penolakan wajib diisi.');
   assertOpen(app);
+  if (stepOf(app).is_billing_step) throw httpError(400, `${docWord(app)} sudah terbit, pengajuan tidak dapat ditutup.`);
   await q('UPDATE applications SET status="ditolak", reject_note=? WHERE id=?', [note, app.id]);
   const logId = await addLog(app, 'tolak', `Pengajuan ditutup: ${note}`, user);
   await saveDocs(app, user, files, { docName, logId });
@@ -141,4 +165,4 @@ async function updateLabInfo(app, user, { labName, labEstimate, labLink, files }
   if (files?.length || labLink) await notify(app, 'Hasil pengujian laboratorium', 'Laporan Hasil Uji (LHU) untuk pengajuan Anda sudah tersedia dan dapat dilihat pada tahap Pengujian laboratorium di akun SILAPP.');
 }
 
-module.exports = { approve, notifyIssued, requestAction, ignore, reject, updateParameter, updateLabInfo };
+module.exports = { approve, paymentBlock, notifyIssued, requestAction, ignore, reject, updateParameter, updateLabInfo };

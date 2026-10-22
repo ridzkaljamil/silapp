@@ -40,7 +40,9 @@ export default function Beranda() {
       return [{ a, ic: 'clock-history', cls: 'ic-warn', pill: ['pill-action', `Temuan audit · ${left}`], t: 'Kirim bukti perbaikan temuan', s: meta, m: <>{name} · tenggat {fmtDate(a.finding_due)} · <b className="text-warn">{left}</b></> }];
     }
     if (a.condition === 'Waiting for Payment' && a.payment_status === 'invoice') return [{ a, ic: 'credit-card', cls: 'ic-info', pill: ['pill-progress', `Proforma Invoice · ${rupiah(a.pay_amount)}`], t: 'Bayar dan unggah bukti transfer', s: meta, m: `${name} · ${rupiah(a.pay_amount)}` }];
-    if (a.status === 'selesai' && !a.survey_done) return [{ a, ic: 'download', cls: 'ic-ok', pill: ['pill-done', `${docWord(a.service_code, true)} terbit`], t: 'Isi survei & unduh dokumen', s: meta, m: `${name} · dokumen telah terbit` }];
+    if (a.current_step.is_billing_step && a.billing?.sent && ['belum', 'ditolak'].includes(a.billing.pay)) return [{ a, ic: 'credit-card', cls: 'ic-info', pill: ['pill-progress', 'Invoice & Faktur'], t: 'Lakukan pelunasan dan unggah bukti bayar', s: meta, m: `${name} · ${docWord(a.service_code, true)} dapat diunduh setelah lunas` }];
+    if (a.current_step.is_billing_step && a.billing?.sent && ['belum', 'ditolak'].includes(a.billing.cut) && a.survey_done) return [{ a, ic: 'file-earmark-text', cls: 'ic-info', pill: ['pill-progress', 'Bukti potong PPh 23'], t: 'Unggah bukti potong PPh 23', s: meta, m: `${name} · boleh menyusul` }];
+    if (a.work_done && !a.survey_done) return [{ a, ic: 'download', cls: 'ic-ok', pill: ['pill-done', `${docWord(a.service_code, true)} terbit`], t: 'Isi survei & unduh dokumen', s: meta, m: `${name} · dokumen telah terbit` }];
     return [];
   });
   const jalan = rows.filter((a) => !['selesai', 'ditolak'].includes(a.status));

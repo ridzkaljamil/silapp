@@ -10,4 +10,5 @@ module.exports = {
   ...require('./payment'),
   ...require('./findings'),
   ...require('./customer'),
+  billing: require('./billing'),
 };

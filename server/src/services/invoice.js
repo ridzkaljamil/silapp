@@ -9,6 +9,7 @@ const PDFDocument = require('pdfkit');
 const { q, one } = require('../config/db');
 const { getSettings, INVOICE_KEYS } = require('../utils/settings');
 const { taxes, optionLabel } = require('../utils/pricing');
+const storage = require('../utils/storage');
 
 const LOGO = path.join(__dirname, '..', '..', '..', 'client', 'public', 'logo-psu.png');
 const BLN = ['Januari', 'Februari', 'Maret', 'April', 'Mei', 'Juni', 'Juli', 'Agustus', 'September', 'Oktober', 'November', 'Desember'];
@@ -237,7 +238,7 @@ async function sendInvoicePdf(app, res) {
   const pay = await one('SELECT * FROM payments WHERE application_id=? ORDER BY id DESC LIMIT 1', [app.id]);
   if (!pay) return res.status(404).json({ message: 'Proforma invoice belum diterbitkan.' });
   const [s, cust] = await Promise.all([
-    getSettings([...INVOICE_KEYS, 'contact_phone', 'contact_email']),
+    getSettings([...INVOICE_KEYS, 'contact_phone', 'contact_email', 'invoice_signature', 'invoice_stamp']),
     one('SELECT name, company_name, address, npwp, phone FROM users WHERE id=?', [app.user_id]),
   ]);
   // invoice lama (sebelum format PSU) belum punya kolom pajak lengkap: hitung ulang dari harga
@@ -300,6 +301,17 @@ async function sendInvoicePdf(app, res) {
   y += 14;
   doc.font(FI).fontSize(9.5).text(`Terbilang : ${terbilang(t.grandTotal)} Rupiah`, L, y, { width: W });
   y = doc.y + 8;
+  // skema pembayaran (tahap Penawaran & Kontrak)
+  const scheme = app.payment_scheme;
+  if (scheme) {
+    const now = pay.due_now == null ? t.grandTotal : +pay.due_now;
+    const fmt = (n) => `Rp ${Number(n).toLocaleString('id-ID')}`;
+    const plan = { full: `Full di Awal — dibayar penuh ${fmt(now)} sebelum pekerjaan dimulai.`,
+      '5050': `50 : 50 — DP 50% ${fmt(now)} dibayar sekarang, pelunasan ${fmt(t.grandTotal - now)} setelah sertifikat/LHU terbit.`,
+      akhir: 'Full di Akhir — seluruh tagihan dibayar setelah sertifikat/LHU terbit (tidak ada pembayaran sekarang).' }[scheme];
+    doc.font(FB).fontSize(9).text('Skema Pembayaran : ', L, y, { continued: true }).font(F).text(clean(plan), { width: W });
+    y = doc.y + 6;
+  }
   if (pay.note) { doc.font(F).fontSize(9).text(clean(`Catatan: ${pay.note}`), L, y, { width: W }); y = doc.y + 6; }
   if (y > 610) { doc.addPage(); y = 50; }
 
@@ -314,6 +326,13 @@ async function sendInvoicePdf(app, res) {
   }
   const tx = R - 190;
   doc.font(F).fontSize(9.5).text('Hormat Kami,', tx, sy, { width: 190, align: 'right' }).text(clean(s.company_name), tx, sy + 14, { width: 190, align: 'right' });
+  // stempel & tanda tangan digital (Pengaturan Umum → Identitas Proforma Invoice); gambar rusak dilewati
+  for (const [key, box] of [['invoice_stamp', { x: R - 150, w: 100 }], ['invoice_signature', { x: R - 170, w: 170 }]]) {
+    try {
+      const img = s[key] ? await storage.buffer(s[key]) : null;
+      if (img) doc.image(img, box.x, sy + 28, { fit: [box.w, 62], align: 'right', valign: 'center' });
+    } catch (e) { console.warn(`[invoice] gambar ${key} tidak dapat dipakai:`, e.message); }
+  }
   doc.font(F).text(clean(s.signer_name || '(.................................)'), tx, sy + 92, { width: 190, align: 'right', underline: !!s.signer_name });
   doc.text(clean(s.signer_title || ''), tx, sy + 106, { width: 190, align: 'right' });
   doc.end();
