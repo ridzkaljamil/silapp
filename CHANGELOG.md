@@ -5,6 +5,23 @@ Pengembangan dimulai 29 September 2026 sebagai bagian dari OJT di PT Penilai Sta
 
 Penomoran versi: angka pertama naik untuk rilis yang siap dipakai, angka kedua untuk penambahan fitur, angka ketiga untuk perbaikan dan dokumentasi.
 
+## [2.1.1] – 2026-10-26
+
+### Ditambahkan
+
+- Menu **Kelola Artikel** di sidebar Admin dan Super Admin, membuka penilaistandaruji.com/dashboard-artikel di tab baru.
+
+### Diperbaiki
+
+- Tombol **Isi Survei** tidak berbuat apa-apa bila pelanggan sedang membuka tab selain Ringkasan (Invoice, Dokumen, Riwayat).
+
+### Diubah
+
+- **Survei kepuasan kini berupa pop-up**, sama seperti form pelanggan lainnya, dan bisa dibuka dari tab mana pun. Di Ringkasan cukup tampil kartu "Survei Kepuasan Pelanggan".
+  - Bilah progres (jumlah pertanyaan yang sudah dinilai) selalu terlihat di bagian atas pop-up.
+  - Jawaban tersimpan otomatis di perangkat; pop-up boleh ditutup dan dilanjutkan nanti (tombol berubah menjadi "Lanjutkan Survei").
+- Tugas "Isi survei & unduh dokumen" di Beranda dan tautan di email "dokumen telah terbit" langsung membuka pop-up survei.
+
 ## [2.1.0] – 2026-10-23
 
 Penyesuaian alur pembayaran sesuai permintaan PSU.

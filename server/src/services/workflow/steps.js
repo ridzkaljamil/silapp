@@ -103,7 +103,7 @@ function notifyIssued(app) {
   const w = docWord(app);
   return notify(app, `${w} telah terbit`,
     `Dengan hormat, kami informasikan bahwa ${w.toLowerCase()} untuk pengajuan ${app.service_name} (${app.product_label}) telah terbit.\n\n` +
-    `Untuk memperoleh dokumen ${w.toLowerCase()}, mohon terlebih dahulu mengisi Survei Kepuasan Pelanggan melalui akun SILAPP Anda:\n${appUrl()}/klien/pengajuan/${app.id}\n\n` +
+    `Untuk memperoleh dokumen ${w.toLowerCase()}, mohon terlebih dahulu mengisi Survei Kepuasan Pelanggan melalui akun SILAPP Anda:\n${appUrl()}/klien/pengajuan/${app.id}#survei\n\n` +
     'Catatan: survei wajib diisi untuk setiap penerbitan dokumen, termasuk bagi pelanggan yang sudah pernah mengisi survei sebelumnya.' +
     (app.payment_scheme && app.payment_scheme !== 'full'
       ? `\n\nSesuai skema pembayaran, ${w.toLowerCase()} dapat diunduh setelah pelunasan diterima PSU. Invoice dan faktur pajak akan kami kirimkan melalui SILAPP.` : ''));

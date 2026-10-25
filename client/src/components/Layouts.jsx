@@ -125,17 +125,19 @@ export function BareLayout() {
 }
 
 const I = (to, label, icon, opt = {}) => ({ to, label, icon, ...opt });
+/** Kelola artikel website company profile (di luar SILAPP, dibuka di tab baru). */
+const ARTIKEL = I('https://penilaistandaruji.com/dashboard-artikel', 'Kelola Artikel', 'newspaper', { external: true });
 const MENUS = {
   user: [
     { items: [I('/klien', 'Beranda', 'house'), I('/klien/ajukan', 'Ajukan Layanan', 'plus-circle'), I('/klien/pengajuan', 'Pengajuan Saya', 'list-check'), I('/klien/template', 'Template Dokumen', 'file-earmark-word')] },
     { label: 'Publik', items: [I('/klien/directory', 'Directory', 'journal-text')] },
   ],
   admin: [
-    { label: 'Operasional', items: [I('/admin', 'Dashboard', 'grid-1x2'), I('/admin/antrean', 'Antrean Pengajuan', 'inbox', { badge: true }), I('/admin/pelanggan', 'Akun Pelanggan', 'person-plus'), I('/admin/sertifikat', 'Data Sertifikat', 'patch-check', { bidang: 'SP' }), I('/admin/template', 'Template Dokumen', 'file-earmark-word')] },
+    { label: 'Operasional', items: [I('/admin', 'Dashboard', 'grid-1x2'), I('/admin/antrean', 'Antrean Pengajuan', 'inbox', { badge: true }), I('/admin/pelanggan', 'Akun Pelanggan', 'person-plus'), I('/admin/sertifikat', 'Data Sertifikat', 'patch-check', { bidang: 'SP' }), I('/admin/template', 'Template Dokumen', 'file-earmark-word'), ARTIKEL] },
   ],
   superadmin: [
     { label: 'Operasional', items: [I('/admin', 'Dashboard', 'grid-1x2'), I('/admin/antrean', 'Antrean Pengajuan', 'inbox', { badge: true }), I('/admin/pelanggan', 'Akun Pelanggan', 'person-plus'), I('/admin/sertifikat', 'Data Sertifikat', 'patch-check')] },
-    { label: 'Pengaturan', items: [I('/admin/pengguna', 'Pengguna Internal', 'people'), I('/admin/layanan', 'Kelola Layanan', 'layers'), I('/admin/template', 'Template Dokumen', 'file-earmark-word'), I('/admin/survei', 'Survei Kepuasan', 'star'), I('/admin/email', 'Log Email', 'envelope')] },
+    { label: 'Pengaturan', items: [I('/admin/pengguna', 'Pengguna Internal', 'people'), I('/admin/layanan', 'Kelola Layanan', 'layers'), I('/admin/template', 'Template Dokumen', 'file-earmark-word'), ARTIKEL, I('/admin/survei', 'Survei Kepuasan', 'star'), I('/admin/email', 'Log Email', 'envelope')] },
   ],
 };
 const readCollapsed = () => { try { return localStorage.getItem('silapp_side') === 'min'; } catch { return false; } };
@@ -347,13 +349,18 @@ export function AppLayout({ roles }) {
   const groups = MENUS[user.role].map((g) => ({ ...g, items: g.items.filter((m) => !m.bidang || m.bidang === user.bidang || user.role === 'superadmin') }));
   const roleText = roleLabel(user);
   const base = isUser ? '/klien' : '/admin';
-  const link = (m) => (
+  const link = (m) => (m.external ? (
+    <a key={m.to} href={m.to} target="_blank" rel="noopener noreferrer" className="side-link" title={collapsed ? `${m.label} (tab baru)` : 'Buka di tab baru'} aria-label={`${m.label} (buka di tab baru)`}>
+      <i className={`bi bi-${m.icon}`} aria-hidden="true" /><span className="txt">{m.label}</span>
+      <i className="bi bi-box-arrow-up-right side-ext" aria-hidden="true" />
+    </a>
+  ) : (
     <NavLink key={m.to + m.label} end={m.to === base} to={m.to} className={({ isActive }) => `side-link ${isActive ? 'active' : ''}`} title={collapsed ? m.label : undefined} aria-label={collapsed ? m.label : undefined}>
       <i className={`bi bi-${m.icon}`} aria-hidden="true" /><span className="txt">{m.label}</span>
       {m.badge && needCount > 0 && <span className="side-badge" title={`${needCount} perlu tindakan PSU`}>{needCount}</span>}
     </NavLink>
-  );
-  const title = groups.flatMap((g) => g.items).find((m) => (m.to === base ? loc.pathname === base : loc.pathname.startsWith(m.to)))?.label
+  ));
+  const title = groups.flatMap((g) => g.items).find((m) => !m.external && (m.to === base ? loc.pathname === base : loc.pathname.startsWith(m.to)))?.label
     || (loc.pathname.includes('/pengajuan/') ? 'Detail Pengajuan' : loc.pathname.endsWith('/sandi') ? 'Ganti Kata Sandi' : loc.pathname.endsWith('/akun') ? 'Pengaturan Akun' : loc.pathname.endsWith('/directory') ? 'Directory' : loc.pathname.endsWith('/lacak') ? 'Lacak Kode' : '');
 
   // tombol di topbar: desktop menyembunyikan/menampilkan sidebar, HP membuka menu geser

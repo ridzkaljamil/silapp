@@ -393,3 +393,11 @@ a.kpi:hover .kpi-go { transform: translateX(2px); }
 .sig-img img.st { right: 40px; }
 .sig-name { text-decoration: underline; }
 
+
+/* survei kepuasan: kartu ajakan di Ringkasan + bilah progres di pop-up */
+.sv-card { border: 1px solid #F5D78E; background: linear-gradient(0deg, #FFFBF0, #FFFBF0); }
+.sv-card-ic { width: 44px; height: 44px; border-radius: 12px; background: #FDEFC7; color: #9A6B00; display: grid; place-items: center; font-size: 20px; flex: none; }
+@media (max-width: 575px) { .sv-card .btn { width: 100%; } }
+.sv-progress { position: sticky; top: -4px; z-index: 2; background: #fff; padding: 8px 0 10px; margin-bottom: -8px; border-bottom: 1px solid var(--line-2); }
+.sv-bar { height: 6px; border-radius: 99px; background: #EEF1F6; margin-top: 6px; overflow: hidden; }
+.sv-bar span { display: block; height: 100%; background: var(--gold); border-radius: 99px; transition: width .25s ease; }

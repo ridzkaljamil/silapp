@@ -7,7 +7,7 @@ import { Loading, useToast, useConfirm, Sheet, FileDrop, Menu, rupiah, fmtDate }
 import { useLiveRefresh } from '../../hooks/useLiveRefresh';
 import ApplicationView from '../../components/ApplicationView';
 import { docWord } from '../../lib/constants';
-import Survey from './Survey';
+import SurveySheet, { SurveyCard, surveyDraftCount } from './Survey';
 
 const EMPTY_ANS = { correction: '', root_cause: '', corrective_action: '' };
 /** Isian wajib bukti perbaikan temuan audit (nama field sama dengan API). */
@@ -30,11 +30,19 @@ export default function PengajuanDetail() {
   const [thanks, setThanks] = useState('');
   const [sheet, setSheet] = useState(null); // { kind: 'reply' | 'pay' | 'bukti' | 'ext', f? }
   const [tab, setTab] = useState('ringkasan');
+  // pop-up survei: dibuka dari tombol "Isi Survei" atau tautan .../pengajuan/:id#survei (Beranda/email)
+  const [svOpen, setSvOpen] = useState(() => window.location.hash === '#survei');
+  const [svCount, setSvCount] = useState(() => surveyDraftCount(id));
   const load = useCallback(() => api.get(`/applications/${id}`).then((r) => setApp(r.data)), [id]);
   useEffect(() => { load(); }, [load]);
   // perbarui otomatis saat ada notifikasi untuk pengajuan ini / tab kembali dibuka
-  useLiveRefresh(load, `/klien/pengajuan/${id}`, !sheet);
+  useLiveRefresh(load, `/klien/pengajuan/${id}`, !sheet && !svOpen);
+  useEffect(() => {
+    // hapus #survei dari alamat agar memuat ulang halaman tidak membuka pop-up lagi
+    if (window.location.hash === '#survei') window.history.replaceState(null, '', window.location.pathname + window.location.search);
+  }, []);
   if (!app) return <Loading />;
+  const goSurvey = () => setSvOpen(true);
 
   // catatan tanggapan tersimpan otomatis di browser per pengajuan & jenis tanggapan
   const noteKey = (kind, f) => `silapp_catatan_${id}_${kind}${f?.id ? `_${f.id}` : ''}`;
@@ -123,7 +131,7 @@ export default function PengajuanDetail() {
   } else if (app.certificate?.locked === 'dicabut') {
     // sertifikat dicabut: tidak ada tindakan, file tidak bisa diunduh (alasan tampil di kotak sertifikat)
   } else if (app.work_done && app.certificate && !app.survey_done) {
-    task = { title: 'Isi Survei Kepuasan', text: `Survei wajib diisi sebelum mengunduh ${dw}.`, cta: 'Isi Survei', onClick: () => document.getElementById('sv-title')?.scrollIntoView({ behavior: 'smooth', block: 'start' }) };
+    task = { title: 'Isi Survei Kepuasan', text: `Survei wajib diisi sebelum mengunduh ${dw}.`, cta: svCount ? 'Lanjutkan Survei' : 'Isi Survei', onClick: goSurvey };
   } else if (billCut) {
     task = { title: 'Unggah Bukti Potong PPh 23', text: 'Boleh menyusul (biasanya 1–2 bulan setelah pembayaran). Kirim juga ke psuindonesia.info@gmail.com.', cta: 'Unggah Bukti Potong', onClick: () => openSheet('potong') };
   } else if (app.work_done && app.certificate?.can_download && app.survey_done) {
@@ -162,8 +170,8 @@ export default function PengajuanDetail() {
     ),
   } : info ? { title: 'Status', body: <div className="task-box info"><span className="ic"><i className={`bi bi-${app.certificate?.locked === 'dicabut' ? 'x-octagon' : 'hourglass-split'}`} /></span><span className="small">{info}</span></div> } : null;
 
-  const survey = app.work_done && app.certificate && !app.survey_done && app.certificate.locked !== 'dicabut'
-    ? <Survey app={app} onDone={(d) => { setApp(d.app); setThanks(d.thank_you_text); window.scrollTo({ top: 0, behavior: 'smooth' }); }} /> : null;
+  const needSurvey = app.work_done && app.certificate && !app.survey_done && app.certificate.locked !== 'dicabut';
+  const surveyCard = needSurvey ? <SurveyCard app={app} answered={svCount} onOpen={goSurvey} /> : null;
 
   const findingActions = active ? (f) => {
     if (f.status === 'ditutup' || f.category === 'observasi') return null;
@@ -187,9 +195,11 @@ export default function PengajuanDetail() {
         onDownloadProof={() => download(`/applications/${id}/payment-proof`, `bukti-bayar-${app.application_no}`).catch((e) => toast(errMsg(e), 'danger'))}
         onBillingUpload={active && st.is_billing_step ? (kind) => openSheet(kind) : undefined}
         onBillingDownload={(file) => download(`/applications/${id}/billing/${file}`, `${file}-${app.application_no}`).catch((e) => toast(errMsg(e), 'danger'))}
-        findingActions={findingActions}>
-        {survey}
-      </ApplicationView>
+        findingActions={findingActions} main={surveyCard} />
+      {needSurvey && (
+        <SurveySheet app={app} open={svOpen} onClose={(n) => { setSvOpen(false); setSvCount(n); }}
+          onDone={(d) => { setSvOpen(false); setSvCount(0); setApp(d.app); setThanks(d.thank_you_text); window.scrollTo({ top: 0, behavior: 'smooth' }); }} />
+      )}
       <Sheet open={!!sheet} onClose={() => !busy && setSheet(null)} title={sheetTitle}
         icon={{ reply: 'reply', pay: 'receipt', bayar: 'receipt', potong: 'file-earmark-text', bukti: 'upload', ext: 'calendar-plus', batal: 'x-circle' }[K]} danger={K === 'batal'}
         sub={K === 'batal' ? 'Pengajuan berhenti dan tidak diproses PSU. Setelah dibatalkan, Anda bisa mengajukan ulang dengan data yang sudah diperbaiki.' : K === 'reply' ? app.action_note : K === 'pay' ? `Dibayar sekarang ${rupiah(app.payment?.due_now)} · ${app.payment?.invoice_no || ''}` : K === 'bayar' ? `Sisa tagihan ${rupiah(app.billing?.amount_due)}` : K === 'potong' ? app.billing?.pph_message : sheet?.f ? `Temuan ${sheet.f.category} #${sheet.f.id}: ${sheet.f.description}` : ''}

@@ -42,7 +42,7 @@ export default function Beranda() {
     if (a.condition === 'Waiting for Payment' && a.payment_status === 'invoice') return [{ a, ic: 'credit-card', cls: 'ic-info', pill: ['pill-progress', `Proforma Invoice · ${rupiah(a.pay_amount)}`], t: 'Bayar dan unggah bukti transfer', s: meta, m: `${name} · ${rupiah(a.pay_amount)}` }];
     if (a.current_step.is_billing_step && a.billing?.sent && ['belum', 'ditolak'].includes(a.billing.pay)) return [{ a, ic: 'credit-card', cls: 'ic-info', pill: ['pill-progress', 'Invoice & Faktur'], t: 'Lakukan pelunasan dan unggah bukti bayar', s: meta, m: `${name} · ${docWord(a.service_code, true)} dapat diunduh setelah lunas` }];
     if (a.current_step.is_billing_step && a.billing?.sent && ['belum', 'ditolak'].includes(a.billing.cut) && a.survey_done) return [{ a, ic: 'file-earmark-text', cls: 'ic-info', pill: ['pill-progress', 'Bukti potong PPh 23'], t: 'Unggah bukti potong PPh 23', s: meta, m: `${name} · boleh menyusul` }];
-    if (a.work_done && !a.survey_done) return [{ a, ic: 'download', cls: 'ic-ok', pill: ['pill-done', `${docWord(a.service_code, true)} terbit`], t: 'Isi survei & unduh dokumen', s: meta, m: `${name} · dokumen telah terbit` }];
+    if (a.work_done && !a.survey_done) return [{ a, survey: true, ic: 'download', cls: 'ic-ok', pill: ['pill-done', `${docWord(a.service_code, true)} terbit`], t: 'Isi survei & unduh dokumen', s: meta, m: `${name} · dokumen telah terbit` }];
     return [];
   });
   const jalan = rows.filter((a) => !['selesai', 'ditolak'].includes(a.status));
@@ -60,7 +60,7 @@ export default function Beranda() {
           <h2 className="mb-2">Perlu Tindakan Anda <span className="text-muted2 fw-normal">· {todo.length}</span></h2>
           <div className="todo-cards">
             {todo.map((x) => (
-              <Link key={x.a.id} to={`/klien/pengajuan/${x.a.id}`} className="todo-card">
+              <Link key={x.a.id} to={`/klien/pengajuan/${x.a.id}${x.survey ? '#survei' : ''}`} className="todo-card">
                 <span className={`pill ${x.pill[0]}`}>{x.pill[1]}</span>
                 <b>{x.t}</b>
                 <span className="small text-muted2">{x.s}</span>
@@ -69,7 +69,7 @@ export default function Beranda() {
           </div>
           <div className="panel todo-list todo-list-m">
             {todo.map((x) => (
-              <Link key={x.a.id} to={`/klien/pengajuan/${x.a.id}`} className="todo-item">
+              <Link key={x.a.id} to={`/klien/pengajuan/${x.a.id}${x.survey ? '#survei' : ''}`} className="todo-item">
                 <span className={`ic ${x.cls}`}><i className={`bi bi-${x.ic}`} /></span>
                 <span className="tx"><b>{x.t}</b><span>{x.m || x.s}</span></span>
                 <i className="bi bi-chevron-right text-muted2" aria-hidden="true" />
